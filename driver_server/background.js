@@ -116,13 +116,7 @@ function openAndScrape(item) {
               throw new Error("Scraped data is null or undefined.");
             }
 
-            if (Array.isArray(result)) {
-              for (const partialResult of result) {
-                await sendDataToServer(partialResult);
-              }
-            } else {
-              await sendDataToServer(result);
-            }
+            await sendDataToServer(result);
 
             const waiter = Array.isArray(item.requests)
               ? item.requests.find(
@@ -161,14 +155,12 @@ function openAndScrape(item) {
 async function contentScriptFunction(item) {
   const flags = Array.isArray(item.flags) ? item.flags : [];
 
-  // 1) remove or pause videos
   if (flags.includes("remove-videos")) {
     document.querySelectorAll("video").forEach((video) => video.remove());
   } else if (flags.includes("pause-videos")) {
     document.querySelectorAll("video").forEach((video) => video.pause());
   }
 
-  // 2) clear localStorage
   if (flags.includes("clear-local-storage")) {
     try {
       localStorage.clear();
@@ -177,7 +169,6 @@ async function contentScriptFunction(item) {
     }
   }
 
-  // 3) clear sessionStorage
   if (flags.includes("clear-session-storage")) {
     try {
       sessionStorage.clear();
@@ -186,21 +177,17 @@ async function contentScriptFunction(item) {
     }
   }
 
-  // 4) clear cookies
   if (flags.includes("clear-cookies")) {
     try {
       document.cookie.split(";").forEach((cookie) => {
         const name = cookie.trim().split("=")[0];
-        document.cookie = `${name}=;expires=${new Date(
-          0
-        ).toUTCString()};path=/;`;
+        document.cookie = `${name}=;expires=${new Date(0).toUTCString()};path=/;`;
       });
     } catch (e) {
       console.warn("Could not clear cookies:", e);
     }
   }
 
-  // 5) disable animation
   if (flags.includes("disable-animation")) {
     try {
       const styleEl = document.createElement("style");
@@ -222,7 +209,6 @@ async function contentScriptFunction(item) {
     }
   }
 
-  // 6) disable indexedDB
   if (flags.includes("disable-indexed-db")) {
     try {
       Object.defineProperty(window, "indexedDB", {
@@ -237,7 +223,6 @@ async function contentScriptFunction(item) {
     }
   }
 
-  // 7) If item.waitFor => wait for that element
   if (item.waitFor) {
     let maxChecks = 50;
     let found = false;
@@ -253,198 +238,173 @@ async function contentScriptFunction(item) {
     }
   }
 
-  // 8) Perform scraping & actions
-  let responses = []; // array-of-arrays or final results
-  let currentParentList = []; // for "select patent" logic
-  let inPatentMode = false;
+  const requests = Array.isArray(item.requests) ? item.requests : [];
+  const patentCommands = [];
+  const extractionCommands = [];
 
-  // parse patent with a range :nth-child(1-5), etc.
-  function parsePatentSelector(selectorValue) {
-    const rangeRegex = /:nth-child\((\d+)-(\d+)\)/;
-    const match = selectorValue.match(rangeRegex);
-
-    if (!match) {
-      // no range => single parent
-      return [{ selector: selectorValue, items: [] }];
+  for (const cmd of requests) {
+    const cmdType = cmd?.type?.toLowerCase().trim();
+    if (!cmdType) {
+      continue;
     }
 
-    const start = parseInt(match[1], 10);
-    const end = parseInt(match[2], 10);
-    if (isNaN(start) || isNaN(end) || start > end) {
-      console.warn("Invalid range in patent selector:", selectorValue);
-      return [{ selector: selectorValue, items: [] }];
+    if (cmdType === "waiter") {
+      const waitTime = Number(cmd.time);
+      if (!isNaN(waitTime) && waitTime > 0) {
+        console.log(`Waiting for ${waitTime} ms...`);
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+      }
+      continue;
     }
 
-    let baseSel = selectorValue.replace(rangeRegex, ":nth-child");
-    let result = [];
-    for (let i = start; i <= end; i++) {
-      result.push({ selector: baseSel + `(${i})`, items: [] });
+    if (cmdType === "patent") {
+      patentCommands.push(cmd);
+      continue;
     }
-    return result;
+
+    if (cmdType === "attr" || cmdType === "tag" || cmdType === "html") {
+      extractionCommands.push(cmd);
+      continue;
+    }
+
+    if (cmdType === "click") {
+      const els = document.querySelectorAll(cmd.selector);
+      els.forEach((el) => el.click());
+      continue;
+    }
+
+    if (cmdType === "fill") {
+      const els = document.querySelectorAll(cmd.selector);
+      els.forEach((el) => {
+        el.value = cmd.value;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      continue;
+    }
   }
 
-  if (Array.isArray(item.requests)) {
-    for (const cmd of item.requests) {
-      // fix trailing spaces in type => "fill " => "fill"
-      const cmdType = cmd.type?.toLowerCase().trim();
-
-      if (cmdType === "select patent") {
-        // finalize old parents
-        if (currentParentList.length > 0) {
-          currentParentList.forEach((p) => {
-            if (p.items.length > 0) {
-              responses.push(p.items);
-            }
-          });
-        }
-        currentParentList = parsePatentSelector(cmd.selector);
-        inPatentMode = true;
-      } else if (cmdType === "select child") {
-        if (!inPatentMode || currentParentList.length === 0) {
-          console.warn("Child selector with no parent. Skipping.");
-          continue;
-        }
-        // For each parent, find child
-        currentParentList.forEach((pObj) => {
-          const combined = pObj.selector + " " + cmd.selector;
-          const els = document.querySelectorAll(combined);
-          els.forEach((el) => {
-            const attrs = [];
-            for (const attr of el.attributes) {
-              attrs.push({ name: attr.name, value: attr.value });
-            }
-            pObj.items.push({
-              // remove line breaks, tabs, extra spaces:
-              html: el.outerHTML.replace(/\s+/g, " ").trim(),
-              attributes: attrs,
-              command_name: cmd.name,
-            });
-          });
-        });
-      } else if (cmdType === "select") {
-        // finalize old parent group
-        if (currentParentList.length > 0) {
-          currentParentList.forEach((p) => responses.push(p.items));
-          currentParentList = [];
-        }
-        inPatentMode = false;
-
-        const els = document.querySelectorAll(cmd.selector);
-        let group = [];
-        els.forEach((el) => {
-          const attrs = [];
-          for (const attr of el.attributes) {
-            attrs.push({ name: attr.name, value: attr.value });
-          }
-          group.push({
-            html: el.outerHTML.replace(/\s+/g, " ").trim(),
-            attributes: attrs,
-            command_name: cmd.name,
-          });
-        });
-        if (group.length > 0) {
-          responses.push(group);
-        }
-      } else if (/^select-\d+$/i.test(cmdType)) {
-        if (currentParentList.length > 0) {
-          currentParentList.forEach((p) => responses.push(p.items));
-          currentParentList = [];
-        }
-        inPatentMode = false;
-
-        const match = cmdType.match(/^select-(\d+)$/i);
-        const selectorIndex = match ? parseInt(match[1], 10) : 0;
-
-        const els = document.querySelectorAll(cmd.selector);
-        let group = [];
-
-        els.forEach((el) => {
-          const attrs = [];
-          for (const attr of el.attributes) {
-            attrs.push({ name: attr.name, value: attr.value });
-          }
-          group.push({
-            html: el.outerHTML.replace(/\s+/g, " ").trim(),
-            attributes: attrs,
-            command_name: cmd.name,
-            selector_group: selectorIndex
-          });
-        });
-
-        if (group.length > 0) {
-          if (!responses[selectorIndex]) {
-            responses[selectorIndex] = [];
-          }
-          responses[selectorIndex].push(...group);
-        }
-      } else if (cmdType === "fill") {
-        inPatentMode = false;
-
-        const els = document.querySelectorAll(cmd.selector);
-        els.forEach((el) => {
-          el.value = cmd.value;
-        });
-      } else if (cmdType === "click") {
-        inPatentMode = false;
-
-        const els = document.querySelectorAll(cmd.selector);
-        els.forEach((el) => {
-          el.click();
-        });
-      } else if (cmdType === "waiter") {
-        inPatentMode = false;
-
-        const waitTime = Number(cmd.time);
-        if (!isNaN(waitTime) && waitTime > 0) {
-          console.log(`Waiting for ${waitTime} ms...`);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-        } else {
-          console.warn("Invalid or missing 'time' for waiter command.");
-        }
-      }
+  function extractAttributeName(cmd) {
+    if (cmd.attribute && typeof cmd.attribute === "string") {
+      return cmd.attribute.trim();
     }
 
-    if (currentParentList.length > 0) {
-      currentParentList.forEach((p) => {
-        if (p.items.length > 0) {
-          responses.push(p.items);
+    if (typeof cmd.selector !== "string") {
+      return null;
+    }
+
+    const matches = [...cmd.selector.matchAll(/\[([^\]]+)\]/g)];
+    if (matches.length === 0) {
+      return null;
+    }
+
+    const lastMatch = matches[matches.length - 1][1];
+    if (!lastMatch) {
+      return null;
+    }
+
+    return lastMatch.split("=")[0].trim();
+  }
+
+  function cleanText(value) {
+    if (typeof value !== "string") {
+      return value;
+    }
+    return value.replace(/\s+/g, " ").trim();
+  }
+
+  function buildRecordFromElement(element, cmd) {
+    if (!element || !cmd?.name) {
+      return undefined;
+    }
+
+    const type = cmd.type?.toLowerCase().trim();
+    if (type === "attr") {
+      const attrName = extractAttributeName(cmd);
+      if (!attrName) {
+        return undefined;
+      }
+      const attrValue = element.getAttribute(attrName);
+      if (attrValue == null) {
+        return undefined;
+      }
+      return cleanText(attrValue);
+    }
+
+    if (type === "tag") {
+      const textValue = element.textContent;
+      if (textValue == null) {
+        return undefined;
+      }
+      return cleanText(textValue);
+    }
+
+    if (type === "html") {
+      return element.outerHTML;
+    }
+
+    return undefined;
+  }
+
+  const data = [];
+
+  if (patentCommands.length > 0 && extractionCommands.length > 0) {
+    for (const patentCmd of patentCommands) {
+      if (!patentCmd.selector) {
+        continue;
+      }
+
+      const patentElements = document.querySelectorAll(patentCmd.selector);
+      patentElements.forEach((patentEl) => {
+        const record = {};
+
+        extractionCommands.forEach((extractCmd) => {
+          const targetEl = patentEl.querySelector(extractCmd.selector);
+          if (!targetEl) {
+            return;
+          }
+
+          const value = buildRecordFromElement(targetEl, extractCmd);
+          if (value !== undefined) {
+            record[extractCmd.name || extractCmd.type] = value;
+          }
+        });
+
+        if (Object.keys(record).length > 0) {
+          data.push(record);
         }
       });
     }
-  }
+  } else if (extractionCommands.length > 0) {
+    const record = {};
 
-  const hasNumberedSelect = Array.isArray(item.requests)
-  ? item.requests.some((cmd) => /^select-\d+$/i.test(cmd.type?.trim()))
-  : false;
+    extractionCommands.forEach((extractCmd) => {
+      if (!extractCmd.selector) {
+        return;
+      }
 
-if (hasNumberedSelect) {
-  const finalResults = [];
+      const targetEl = document.querySelector(extractCmd.selector);
+      if (!targetEl) {
+        return;
+      }
 
-  if (Array.isArray(responses)) {
-    responses.forEach((group, index) => {
-      if (group && group.length > 0) {
-        finalResults.push({
-          id: `${item.id}-${index}`,
-          timestamp: new Date().toISOString(),
-          url: item.proxifiedUrl || item.url,
-          responses: group
-        });
+      const value = buildRecordFromElement(targetEl, extractCmd);
+      if (value !== undefined) {
+        record[extractCmd.name || extractCmd.type] = value;
       }
     });
+
+    if (Object.keys(record).length > 0) {
+      data.push(record);
+    }
   }
 
-  return finalResults;
-} else {
   return {
     id: item.id,
     timestamp: new Date().toISOString(),
     url: item.proxifiedUrl || item.url,
-    responses
+    data,
   };
-}
-
-  return finalResults;
-
 }
 
 /************************************************
