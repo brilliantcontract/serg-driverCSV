@@ -117,13 +117,33 @@ app.post('/scrape_data', (req, res) => {
 
     const parsedData = JSON.parse(l_scraped_data);
 
-    const payloadArray = Array.isArray(parsedData)
-      ? parsedData
-      : Array.isArray(parsedData?.data)
-        ? parsedData.data
-        : parsedData && typeof parsedData === 'object'
-          ? [parsedData]
-          : [];
+    let payloadArray = [];
+    let baseMetadata = {};
+
+    if (Array.isArray(parsedData)) {
+      payloadArray = parsedData.map((entry) => {
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          return { ...entry };
+        }
+
+        return { value: normaliseValue(entry) };
+      });
+    } else if (parsedData && typeof parsedData === 'object') {
+      const { data, ...rest } = parsedData;
+      baseMetadata = rest;
+
+      if (Array.isArray(data)) {
+        payloadArray = data.map((entry) => {
+          if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+            return { ...baseMetadata, ...entry };
+          }
+
+          return { ...baseMetadata, value: normaliseValue(entry) };
+        });
+      } else if (Object.keys(baseMetadata).length > 0) {
+        payloadArray = [{ ...baseMetadata }];
+      }
+    }
 
     if (payloadArray.length === 0) {
       console.warn('No structured data received to persist.');
