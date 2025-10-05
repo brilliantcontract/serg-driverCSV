@@ -1,5 +1,7 @@
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
+import https from 'https';
 import path from 'path';
 
 const app = express();
@@ -176,27 +178,73 @@ function generateUniqueImagePath(baseName, extension) {
   return path.join(imageFolderName, candidate);
 }
 
-function saveImageValue(value, baseId, entryIndex, fieldKey) {
+async function downloadImageBuffer(imageUrl) {
+  if (!imageUrl) {
+    return null;
+  }
+
+  if (typeof fetch === 'function') {
+    try {
+      const response = await fetch(imageUrl);
+
+      if (!response.ok) {
+        console.warn(`Failed to download image via fetch: HTTP ${response.status}`);
+      } else {
+        const arrayBuffer = await response.arrayBuffer();
+        return {
+          buffer: Buffer.from(arrayBuffer),
+          contentType: response.headers.get('content-type'),
+        };
+      }
+    } catch (error) {
+      console.warn('Error downloading image via fetch:', error);
+    }
+  }
+
+  try {
+    const urlObject = new URL(imageUrl);
+    const client = urlObject.protocol === 'https:' ? https : http;
+
+    return await new Promise((resolve, reject) => {
+      const request = client.get(urlObject, (response) => {
+        const { statusCode, headers } = response;
+
+        if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
+          const redirectUrl = new URL(headers.location, urlObject);
+          response.resume();
+          downloadImageBuffer(redirectUrl.toString()).then(resolve).catch(reject);
+          return;
+        }
+
+        if (statusCode !== 200) {
+          response.resume();
+          reject(new Error(`HTTP ${statusCode}`));
+          return;
+        }
+
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => {
+          resolve({
+            buffer: Buffer.concat(chunks),
+            contentType: headers['content-type'],
+          });
+        });
+      });
+
+      request.on('error', reject);
+    });
+  } catch (error) {
+    console.warn('Error downloading image via http/https:', error);
+  }
+
+  return null;
+}
+
+async function saveImageValue(value, baseId, entryIndex, fieldKey) {
   if (!value || typeof value !== 'object') {
     return null;
   }
-
-  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : null;
-  if (!dataUrl || !dataUrl.startsWith('data:')) {
-    return null;
-  }
-
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) {
-    return null;
-  }
-
-  const [, mimeType, base64Payload] = match;
-  if (!base64Payload) {
-    return null;
-  }
-
-  const buffer = Buffer.from(base64Payload, 'base64');
 
   const preferredName = (() => {
     const fromValue = typeof value.fileName === 'string' && value.fileName.trim()
@@ -221,47 +269,87 @@ function saveImageValue(value, baseId, entryIndex, fieldKey) {
     ? value.extension.trim().toLowerCase()
     : null;
 
-  const extension = extensionPreference || determineImageExtension(value.contentType || mimeType, value.sourceUrl);
-  const filePath = generateUniqueImagePath(preferredName, extension);
+  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : null;
 
-  fs.writeFileSync(filePath, buffer);
+  if (dataUrl && dataUrl.startsWith('data:')) {
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      return null;
+    }
 
-  return path.relative('.', filePath);
+    const [, mimeType, base64Payload] = match;
+    if (!base64Payload) {
+      return null;
+    }
+
+    const buffer = Buffer.from(base64Payload, 'base64');
+    const extension = extensionPreference || determineImageExtension(value.contentType || mimeType, value.sourceUrl);
+    const filePath = generateUniqueImagePath(preferredName, extension);
+
+    fs.writeFileSync(filePath, buffer);
+
+    return path.relative('.', filePath);
+  }
+
+  const typeHint = typeof value.type === 'string' ? value.type.trim().toLowerCase() : null;
+  const directUrl = typeof value.url === 'string' ? value.url.trim() : null;
+
+  if (directUrl && (!typeHint || typeHint === 'img' || typeHint === 'image')) {
+    const downloadResult = await downloadImageBuffer(directUrl);
+
+    if (!downloadResult) {
+      return null;
+    }
+
+    const { buffer, contentType } = downloadResult;
+    const extension = extensionPreference || determineImageExtension(value.contentType || contentType, directUrl);
+    const filePath = generateUniqueImagePath(preferredName, extension);
+
+    fs.writeFileSync(filePath, buffer);
+
+    return path.relative('.', filePath);
+  }
+
+  return null;
 }
 
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === '[object Object]';
 }
 
-function processImageValue(value, baseId, entryIndex, fieldPath) {
-  const savedPath = saveImageValue(value, baseId, entryIndex, fieldPath);
+async function processImageValue(value, baseId, entryIndex, fieldPath) {
+  const savedPath = await saveImageValue(value, baseId, entryIndex, fieldPath);
   if (savedPath) {
     return savedPath;
   }
 
   if (Array.isArray(value)) {
-    return value.map((item, idx) => {
+    const results = [];
+    for (let idx = 0; idx < value.length; idx += 1) {
       const nextPath = fieldPath ? `${fieldPath}-${idx}` : String(idx);
-      return processImageValue(item, baseId, entryIndex, nextPath);
-    });
+      results.push(await processImageValue(value[idx], baseId, entryIndex, nextPath));
+    }
+    return results;
   }
 
   if (value && typeof value === 'object' && isPlainObject(value)) {
-    return Object.keys(value).reduce((acc, key) => {
+    const entries = {};
+    const keys = Object.keys(value);
+    for (const key of keys) {
       const nextPath = fieldPath ? `${fieldPath}.${key}` : key;
-      acc[key] = processImageValue(value[key], baseId, entryIndex, nextPath);
-      return acc;
-    }, {});
+      entries[key] = await processImageValue(value[key], baseId, entryIndex, nextPath);
+    }
+    return entries;
   }
 
   return value;
 }
 
-function processEntryImages(entry, baseId, entryIndex) {
+async function processEntryImages(entry, baseId, entryIndex) {
   return processImageValue(entry, baseId, entryIndex, '');
 }
 
-app.post('/scrape_data', (req, res) => {
+app.post('/scrape_data', async (req, res) => {
   try {
     const { l_scraped_data } = req.body;
 
@@ -279,7 +367,10 @@ app.post('/scrape_data', (req, res) => {
     let baseMetadata = {};
 
     if (Array.isArray(parsedData)) {
-      const processedArray = parsedData.map((entry, index) => processEntryImages(entry, baseId, index));
+      const processedArray = [];
+      for (let index = 0; index < parsedData.length; index += 1) {
+        processedArray.push(await processEntryImages(parsedData[index], baseId, index));
+      }
       parsedData = processedArray;
 
       payloadArray = processedArray.map((entry) => {
@@ -291,10 +382,13 @@ app.post('/scrape_data', (req, res) => {
       });
     } else if (parsedData && typeof parsedData === 'object') {
       const { data, ...rest } = parsedData;
-      baseMetadata = processEntryImages(rest, baseId, 'meta');
+      baseMetadata = await processEntryImages(rest, baseId, 'meta');
 
       if (Array.isArray(data)) {
-        const processedDataArray = data.map((entry, index) => processEntryImages(entry, baseId, index));
+        const processedDataArray = [];
+        for (let index = 0; index < data.length; index += 1) {
+          processedDataArray.push(await processEntryImages(data[index], baseId, index));
+        }
         parsedData = { ...baseMetadata, data: processedDataArray };
 
         payloadArray = processedDataArray.map((entry) => {
@@ -304,9 +398,15 @@ app.post('/scrape_data', (req, res) => {
 
           return { ...baseMetadata, value: normaliseValue(entry) };
         });
-      } else {
-        parsedData = { ...baseMetadata, data };
+      } else if (data !== undefined) {
+        const processedDataValue = await processEntryImages(data, baseId, 'data');
+        parsedData = { ...baseMetadata, data: processedDataValue };
 
+        if (Object.keys(baseMetadata).length > 0) {
+          payloadArray = [{ ...baseMetadata }];
+        }
+      } else {
+        parsedData = { ...baseMetadata };
         if (Object.keys(baseMetadata).length > 0) {
           payloadArray = [{ ...baseMetadata }];
         }
