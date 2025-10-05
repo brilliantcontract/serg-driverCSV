@@ -180,7 +180,7 @@ app.post('/scrape_data', (req, res) => {
   }
 });
 
-const PORT = 3000;
+const PORT = 3010;
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
 });

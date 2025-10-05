@@ -1,4 +1,4 @@
-const wsUrls = ["ws://localhost:8001"];
+const wsUrls = ["ws://localhost:8011"];
 const wsClients = {};
 const reconnectInterval = 1000; // 1 second
 

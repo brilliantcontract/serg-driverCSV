@@ -2,7 +2,7 @@ const fs = require("fs").promises;
 const WebSocket = require("ws");
 
 const { WebSocketServer } = WebSocket;
-const wsServer = new WebSocketServer({ port: 8001 });
+const wsServer = new WebSocketServer({ port: 8011 });
 
 const clients = new Set();
 
@@ -86,7 +86,7 @@ async function runServer() {
       const next = groupedDataQueue.shift();
       broadcast(next);
       console.log("📤 Sent to extension - 1");
-    }, 3000);
+    }, 4000);
 
     console.log("✅ Ready. Sending one instruction");
   } catch (err) {
