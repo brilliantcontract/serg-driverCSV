@@ -213,7 +213,8 @@ function saveImageValue(value, baseId, entryIndex, fieldKey) {
       return String(baseId);
     }
 
-    return `${entryIndex}-${fieldKey}`;
+    const keySegment = fieldKey ? `-${fieldKey}` : '';
+    return `${entryIndex}${keySegment}`;
   })();
 
   const extensionPreference = typeof value.extension === 'string' && value.extension.trim()
@@ -228,21 +229,36 @@ function saveImageValue(value, baseId, entryIndex, fieldKey) {
   return path.relative('.', filePath);
 }
 
-function processEntryImages(entry, baseId, entryIndex) {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-    return entry;
+function isPlainObject(value) {
+  return Object.prototype.toString.call(value) === '[object Object]';
+}
+
+function processImageValue(value, baseId, entryIndex, fieldPath) {
+  const savedPath = saveImageValue(value, baseId, entryIndex, fieldPath);
+  if (savedPath) {
+    return savedPath;
   }
 
-  const processed = { ...entry };
+  if (Array.isArray(value)) {
+    return value.map((item, idx) => {
+      const nextPath = fieldPath ? `${fieldPath}-${idx}` : String(idx);
+      return processImageValue(item, baseId, entryIndex, nextPath);
+    });
+  }
 
-  Object.keys(processed).forEach((key) => {
-    const savedPath = saveImageValue(processed[key], baseId, entryIndex, key);
-    if (savedPath) {
-      processed[key] = savedPath;
-    }
-  });
+  if (value && typeof value === 'object' && isPlainObject(value)) {
+    return Object.keys(value).reduce((acc, key) => {
+      const nextPath = fieldPath ? `${fieldPath}.${key}` : key;
+      acc[key] = processImageValue(value[key], baseId, entryIndex, nextPath);
+      return acc;
+    }, {});
+  }
 
-  return processed;
+  return value;
+}
+
+function processEntryImages(entry, baseId, entryIndex) {
+  return processImageValue(entry, baseId, entryIndex, '');
 }
 
 app.post('/scrape_data', (req, res) => {
