@@ -262,7 +262,7 @@ async function contentScriptFunction(item) {
       continue;
     }
 
-    if (cmdType === "attr" || cmdType === "tag" || cmdType === "html" || cmdType === "img") {
+    if (cmdType === "attr" || cmdType === "tag" || cmdType === "html") {
       extractionCommands.push(cmd);
       continue;
     }
@@ -313,283 +313,8 @@ async function contentScriptFunction(item) {
     return value.replace(/\s+/g, " ").trim();
   }
 
-  function sanitizeFileName(name) {
-    if (!name) {
-      return "";
-    }
-
-    return name.replace(/[\\/:*?"<>|]+/g, "_");
-  }
-
-  function ensureFileExtension(fileName, extension) {
-    if (!extension) {
-      return sanitizeFileName(fileName);
-    }
-
-    const sanitized = sanitizeFileName(fileName);
-    if (new RegExp(`\\.${extension}$`, "i").test(sanitized)) {
-      return sanitized;
-    }
-
-    return `${sanitized}.${extension}`;
-  }
-
-
-  function deriveImageName(cmd, element, containerEl) {
-    if (typeof cmd.name === "string" && cmd.name.trim()) {
-      return cmd.name.trim();
-    }
-
-    if (typeof cmd.nameSelector === "string" && containerEl) {
-      const nameEl = containerEl.querySelector(cmd.nameSelector);
-      if (nameEl && nameEl.textContent) {
-        return cleanText(nameEl.textContent);
-      }
-    }
-
-    if (typeof cmd.nameAttribute === "string") {
-      const attrValue = element.getAttribute(cmd.nameAttribute);
-      if (attrValue) {
-        return attrValue.trim();
-      }
-    }
-
-    if (
-      typeof cmd.selector === "string" &&
-      cmd.selector.trim() &&
-      cmd.type?.toLowerCase().trim() === "img"
-    ) {
-      const selectorName = sanitizeFileName(cmd.selector.trim());
-      if (selectorName) {
-        return selectorName;
-      }
-    }
-
-    const attrFromSelector = extractAttributeName(cmd);
-    if (attrFromSelector) {
-      const attrValue = element.getAttribute(attrFromSelector);
-      if (attrValue) {
-        return attrValue.trim();
-      }
-    }
-
-    const altValue = element.getAttribute("alt");
-    if (altValue) {
-      return altValue.trim();
-    }
-
-    const src = element.currentSrc || element.src || element.getAttribute("src");
-    if (src) {
-      try {
-        const url = new URL(src, window.location.href);
-        const parts = url.pathname.split("/").filter(Boolean);
-        const lastPart = parts[parts.length - 1];
-        if (lastPart) {
-          return lastPart;
-        }
-      } catch (e) {
-        const fallback = src.split("/").filter(Boolean).pop();
-        if (fallback) {
-          return fallback;
-        }
-      }
-    }
-
-    return `image-${Date.now()}`;
-  }
-
-  function arrayBufferToBase64(buffer) {
-    let binary = "";
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 0x8000;
-
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize);
-      binary += String.fromCharCode(...chunk);
-    }
-
-    return btoa(binary);
-  }
-
-  function dataUrlToBlob(dataUrl) {
-    if (typeof dataUrl !== "string") {
-      return null;
-    }
-
-    const commaIndex = dataUrl.indexOf(",");
-    if (commaIndex < 0) {
-      return null;
-    }
-
-    const header = dataUrl.substring(5, commaIndex);
-    const dataPart = dataUrl.substring(commaIndex + 1);
-    const isBase64 = /;base64/i.test(header);
-    const mimeType = header.split(";")[0] || "application/octet-stream";
-
-    if (!isBase64) {
-      try {
-        const decoded = decodeURIComponent(dataPart);
-        const encoder = new TextEncoder();
-        return new Blob([encoder.encode(decoded)], { type: mimeType });
-      } catch (error) {
-        console.warn("Failed to decode data URL", error);
-        return null;
-      }
-    }
-
-    try {
-      const binary = atob(dataPart);
-      const len = binary.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return new Blob([bytes], { type: mimeType });
-    } catch (error) {
-      console.warn("Failed to convert base64 data URL to blob", error);
-      return null;
-    }
-  }
-
-  async function convertBlobToPngDataUrl(blob) {
-    if (!blob) {
-      return null;
-    }
-
-    if (typeof createImageBitmap === "function") {
-      try {
-        const bitmap = await createImageBitmap(blob);
-        const canvas = document.createElement("canvas");
-        canvas.width = bitmap.width || 1;
-        canvas.height = bitmap.height || 1;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(bitmap, 0, 0);
-        const pngDataUrl = canvas.toDataURL("image/png");
-        if (typeof bitmap.close === "function") {
-          bitmap.close();
-        }
-        return pngDataUrl;
-      } catch (error) {
-        console.warn("createImageBitmap failed for PNG conversion", error);
-      }
-    }
-
-    try {
-      const url = URL.createObjectURL(blob);
-      const pngDataUrl = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          try {
-            const canvas = document.createElement("canvas");
-            canvas.width = img.naturalWidth || img.width || 1;
-            canvas.height = img.naturalHeight || img.height || 1;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0);
-            resolve(canvas.toDataURL("image/png"));
-          } catch (err) {
-            reject(err);
-          } finally {
-            URL.revokeObjectURL(url);
-          }
-        };
-        img.onerror = (err) => {
-          URL.revokeObjectURL(url);
-          reject(err);
-        };
-        img.src = url;
-      });
-      return pngDataUrl;
-    } catch (error) {
-      console.warn("Failed to convert blob to PNG via canvas", error);
-    }
-
-    return null;
-  }
-
-  async function fetchImageData(src, options = {}) {
-    const { forcePng = false } = options;
-    if (!src) {
-      return null;
-    }
-
-    if (src.startsWith("data:")) {
-      const commaIndex = src.indexOf(",");
-      const header = src.substring(5, commaIndex >= 0 ? commaIndex : src.length);
-      const [mimePart] = header.split(";");
-      const mimeType = mimePart || "";
-
-      if (!forcePng || /^image\/png$/i.test(mimeType)) {
-        return {
-          dataUrl: src,
-          contentType: mimeType,
-          sourceUrl: src,
-        };
-      }
-
-      const blob = dataUrlToBlob(src);
-      if (!blob) {
-        return {
-          dataUrl: src,
-          contentType: mimeType,
-          sourceUrl: src,
-        };
-      }
-
-      const pngDataUrl = await convertBlobToPngDataUrl(blob);
-      if (pngDataUrl) {
-        return {
-          dataUrl: pngDataUrl,
-          contentType: "image/png",
-          sourceUrl: src,
-        };
-      }
-
-      return {
-        dataUrl: src,
-        contentType: mimeType,
-        sourceUrl: src,
-      };
-    }
-
-    let absoluteUrl = src;
-    try {
-      absoluteUrl = new URL(src, window.location.href).href;
-    } catch (err) {
-      // ignore URL parsing error, use original src
-    }
-
-    try {
-      const response = await fetch(absoluteUrl, { credentials: "include" });
-      if (!response.ok) {
-        console.warn("Failed to fetch image", absoluteUrl, response.status);
-        return null;
-      }
-
-      const contentType = response.headers.get("content-type") || "";
-      const buffer = await response.arrayBuffer();
-      const blob = new Blob([buffer], {
-        type: contentType || "application/octet-stream",
-      });
-
-      if (forcePng) {
-        const pngDataUrl = await convertBlobToPngDataUrl(blob);
-        if (pngDataUrl) {
-          return { dataUrl: pngDataUrl, contentType: "image/png", sourceUrl: absoluteUrl };
-        }
-      }
-
-      const base64 = arrayBufferToBase64(buffer);
-      const dataUrl = `data:${contentType || "application/octet-stream"};base64,${base64}`;
-
-      return { dataUrl, contentType, sourceUrl: absoluteUrl };
-    } catch (error) {
-      console.warn("Failed to download image", absoluteUrl, error);
-      return null;
-    }
-  }
-
-  async function buildRecordFromElement(element, cmd, containerEl) {
-    if (!element || !cmd) {
+  function buildRecordFromElement(element, cmd) {
+    if (!element || !cmd?.name) {
       return undefined;
     }
 
@@ -618,26 +343,6 @@ async function contentScriptFunction(item) {
       return element.outerHTML;
     }
 
-    if (type === "img") {
-      const src = element.currentSrc || element.src || element.getAttribute("src");
-      if (!src) {
-        return undefined;
-      }
-
-      const imageMeta = await fetchImageData(src, { forcePng: true });
-      if (!imageMeta) {
-        return undefined;
-      }
-
-      return {
-        fileName,
-        name: baseName,
-        contentType: imageMeta.contentType,
-        dataUrl: imageMeta.dataUrl,
-        sourceUrl: imageMeta.sourceUrl || src,
-      };
-    }
-
     return undefined;
   }
 
@@ -650,85 +355,57 @@ async function contentScriptFunction(item) {
       }
 
       const patentElements = document.querySelectorAll(patentCmd.selector);
-      for (const patentEl of patentElements) {
+      patentElements.forEach((patentEl) => {
         const record = {};
 
-        for (const extractCmd of extractionCommands) {
+        extractionCommands.forEach((extractCmd) => {
           const targetEl = patentEl.querySelector(extractCmd.selector);
           if (!targetEl) {
-            continue;
+            return;
           }
 
-          const value = await buildRecordFromElement(targetEl, extractCmd, patentEl);
+          const value = buildRecordFromElement(targetEl, extractCmd);
           if (value !== undefined) {
             record[extractCmd.name || extractCmd.type] = value;
           }
-        }
+        });
 
         if (Object.keys(record).length > 0) {
           data.push(record);
         }
-      }
+      });
     }
   } else if (extractionCommands.length > 0) {
     const record = {};
 
-    for (const extractCmd of extractionCommands) {
+    extractionCommands.forEach((extractCmd) => {
       if (!extractCmd.selector) {
-        continue;
+        return;
       }
 
       const targetEl = document.querySelector(extractCmd.selector);
       if (!targetEl) {
-        continue;
+        return;
       }
 
-      const value = await buildRecordFromElement(targetEl, extractCmd, document);
+      const value = buildRecordFromElement(targetEl, extractCmd);
       if (value !== undefined) {
         record[extractCmd.name || extractCmd.type] = value;
       }
-    }
+    });
 
     if (Object.keys(record).length > 0) {
       data.push(record);
     }
   }
 
-
-  const hasNumberedSelect = Array.isArray(item.requests)
-    ? item.requests.some((cmd) => /^select-\d+$/i.test(cmd.type?.trim()))
-    : false;
-
-  if (hasNumberedSelect) {
-    const finalResults = [];
-
-    if (Array.isArray(responses)) {
-      responses.forEach((group, index) => {
-        if (group && group.length > 0) {
-          finalResults.push({
-            id: `${item.id}-${index}`,
-            timestamp: new Date().toISOString(),
-            url: item.proxifiedUrl || item.url,
-            responses: group
-          });
-        }
-      });
-    }
-
-    return finalResults;
-  } else {
-    return {
-      id: item.id,
-      timestamp: new Date().toISOString(),
-      url: item.proxifiedUrl || item.url,
-      data
-    };
-  }
-
-  return finalResults;
-
+  return {
+    id: item.id,
+    timestamp: new Date().toISOString(),
+    url: item.proxifiedUrl || item.url,
+    data,
+  };
 }
-
 
 /************************************************
  * Simple wait function
