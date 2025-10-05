@@ -334,34 +334,6 @@ async function contentScriptFunction(item) {
     return `${sanitized}.${extension}`;
   }
 
-  function determineExtensionFromSource(contentType, src) {
-    if (contentType) {
-      const mime = contentType.split(";")[0].trim().toLowerCase();
-      const mimeMap = {
-        "image/jpeg": "jpg",
-        "image/jpg": "jpg",
-        "image/png": "png",
-        "image/gif": "gif",
-        "image/webp": "webp",
-        "image/svg+xml": "svg",
-        "image/bmp": "bmp",
-        "image/x-icon": "ico",
-      };
-
-      if (mimeMap[mime]) {
-        return mimeMap[mime];
-      }
-    }
-
-    if (src) {
-      const match = src.match(/\.([a-z0-9]+)(?:[?#].*)?$/i);
-      if (match) {
-        return match[1].toLowerCase();
-      }
-    }
-
-    return "png";
-  }
 
   function deriveImageName(cmd, element, containerEl) {
     if (typeof cmd.name === "string" && cmd.name.trim()) {
@@ -379,6 +351,17 @@ async function contentScriptFunction(item) {
       const attrValue = element.getAttribute(cmd.nameAttribute);
       if (attrValue) {
         return attrValue.trim();
+      }
+    }
+
+    if (
+      typeof cmd.selector === "string" &&
+      cmd.selector.trim() &&
+      cmd.type?.toLowerCase().trim() === "img"
+    ) {
+      const selectorName = sanitizeFileName(cmd.selector.trim());
+      if (selectorName) {
+        return selectorName;
       }
     }
 
@@ -428,7 +411,103 @@ async function contentScriptFunction(item) {
     return btoa(binary);
   }
 
-  async function fetchImageData(src) {
+  function dataUrlToBlob(dataUrl) {
+    if (typeof dataUrl !== "string") {
+      return null;
+    }
+
+    const commaIndex = dataUrl.indexOf(",");
+    if (commaIndex < 0) {
+      return null;
+    }
+
+    const header = dataUrl.substring(5, commaIndex);
+    const dataPart = dataUrl.substring(commaIndex + 1);
+    const isBase64 = /;base64/i.test(header);
+    const mimeType = header.split(";")[0] || "application/octet-stream";
+
+    if (!isBase64) {
+      try {
+        const decoded = decodeURIComponent(dataPart);
+        const encoder = new TextEncoder();
+        return new Blob([encoder.encode(decoded)], { type: mimeType });
+      } catch (error) {
+        console.warn("Failed to decode data URL", error);
+        return null;
+      }
+    }
+
+    try {
+      const binary = atob(dataPart);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: mimeType });
+    } catch (error) {
+      console.warn("Failed to convert base64 data URL to blob", error);
+      return null;
+    }
+  }
+
+  async function convertBlobToPngDataUrl(blob) {
+    if (!blob) {
+      return null;
+    }
+
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width || 1;
+        canvas.height = bitmap.height || 1;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0);
+        const pngDataUrl = canvas.toDataURL("image/png");
+        if (typeof bitmap.close === "function") {
+          bitmap.close();
+        }
+        return pngDataUrl;
+      } catch (error) {
+        console.warn("createImageBitmap failed for PNG conversion", error);
+      }
+    }
+
+    try {
+      const url = URL.createObjectURL(blob);
+      const pngDataUrl = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth || img.width || 1;
+            canvas.height = img.naturalHeight || img.height || 1;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas.toDataURL("image/png"));
+          } catch (err) {
+            reject(err);
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+        };
+        img.onerror = (err) => {
+          URL.revokeObjectURL(url);
+          reject(err);
+        };
+        img.src = url;
+      });
+      return pngDataUrl;
+    } catch (error) {
+      console.warn("Failed to convert blob to PNG via canvas", error);
+    }
+
+    return null;
+  }
+
+  async function fetchImageData(src, options = {}) {
+    const { forcePng = false } = options;
     if (!src) {
       return null;
     }
@@ -438,6 +517,33 @@ async function contentScriptFunction(item) {
       const header = src.substring(5, commaIndex >= 0 ? commaIndex : src.length);
       const [mimePart] = header.split(";");
       const mimeType = mimePart || "";
+
+      if (!forcePng || /^image\/png$/i.test(mimeType)) {
+        return {
+          dataUrl: src,
+          contentType: mimeType,
+          sourceUrl: src,
+        };
+      }
+
+      const blob = dataUrlToBlob(src);
+      if (!blob) {
+        return {
+          dataUrl: src,
+          contentType: mimeType,
+          sourceUrl: src,
+        };
+      }
+
+      const pngDataUrl = await convertBlobToPngDataUrl(blob);
+      if (pngDataUrl) {
+        return {
+          dataUrl: pngDataUrl,
+          contentType: "image/png",
+          sourceUrl: src,
+        };
+      }
+
       return {
         dataUrl: src,
         contentType: mimeType,
@@ -461,6 +567,17 @@ async function contentScriptFunction(item) {
 
       const contentType = response.headers.get("content-type") || "";
       const buffer = await response.arrayBuffer();
+      const blob = new Blob([buffer], {
+        type: contentType || "application/octet-stream",
+      });
+
+      if (forcePng) {
+        const pngDataUrl = await convertBlobToPngDataUrl(blob);
+        if (pngDataUrl) {
+          return { dataUrl: pngDataUrl, contentType: "image/png", sourceUrl: absoluteUrl };
+        }
+      }
+
       const base64 = arrayBufferToBase64(buffer);
       const dataUrl = `data:${contentType || "application/octet-stream"};base64,${base64}`;
 
@@ -507,21 +624,14 @@ async function contentScriptFunction(item) {
         return undefined;
       }
 
-      const imageMeta = await fetchImageData(src);
+      const imageMeta = await fetchImageData(src, { forcePng: true });
       if (!imageMeta) {
         return undefined;
       }
 
-      const rawName = deriveImageName(cmd, element, containerEl);
-      const extension = determineExtensionFromSource(
-        imageMeta.contentType,
-        imageMeta.sourceUrl || src
-      );
-      const fileName = ensureFileExtension(rawName, extension);
-
       return {
         fileName,
-        name: rawName,
+        name: baseName,
         contentType: imageMeta.contentType,
         dataUrl: imageMeta.dataUrl,
         sourceUrl: imageMeta.sourceUrl || src,
