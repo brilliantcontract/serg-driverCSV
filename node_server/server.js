@@ -246,6 +246,12 @@ async function saveImageValue(value, baseId, entryIndex, fieldKey) {
     return null;
   }
 
+  const typeHint = typeof value.type === 'string' ? value.type.trim().toLowerCase() : null;
+
+  if (typeHint !== 'img') {
+    return null;
+  }
+
   const preferredName = (() => {
     const fromValue = typeof value.fileName === 'string' && value.fileName.trim()
       ? value.fileName.trim()
@@ -291,10 +297,7 @@ async function saveImageValue(value, baseId, entryIndex, fieldKey) {
     return path.relative('.', filePath);
   }
 
-  const typeHint = typeof value.type === 'string' ? value.type.trim().toLowerCase() : null;
-  const directUrl = typeof value.url === 'string' ? value.url.trim() : null;
-
-  if (directUrl && (!typeHint || typeHint === 'img' || typeHint === 'image')) {
+  if (directUrl) {
     const downloadResult = await downloadImageBuffer(directUrl);
 
     if (!downloadResult) {
