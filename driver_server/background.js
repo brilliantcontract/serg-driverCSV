@@ -262,7 +262,7 @@ async function contentScriptFunction(item) {
       continue;
     }
 
-    if (cmdType === "attr" || cmdType === "tag" || cmdType === "html") {
+    if (cmdType === "attr" || cmdType === "tag" || cmdType === "html" || cmdType === "img") {
       extractionCommands.push(cmd);
       continue;
     }
@@ -313,8 +313,166 @@ async function contentScriptFunction(item) {
     return value.replace(/\s+/g, " ").trim();
   }
 
-  function buildRecordFromElement(element, cmd) {
-    if (!element || !cmd?.name) {
+  function sanitizeFileName(name) {
+    if (!name) {
+      return "";
+    }
+
+    return name.replace(/[\\/:*?"<>|]+/g, "_");
+  }
+
+  function ensureFileExtension(fileName, extension) {
+    if (!extension) {
+      return sanitizeFileName(fileName);
+    }
+
+    const sanitized = sanitizeFileName(fileName);
+    if (new RegExp(`\\.${extension}$`, "i").test(sanitized)) {
+      return sanitized;
+    }
+
+    return `${sanitized}.${extension}`;
+  }
+
+  function determineExtensionFromSource(contentType, src) {
+    if (contentType) {
+      const mime = contentType.split(";")[0].trim().toLowerCase();
+      const mimeMap = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/svg+xml": "svg",
+        "image/bmp": "bmp",
+        "image/x-icon": "ico",
+      };
+
+      if (mimeMap[mime]) {
+        return mimeMap[mime];
+      }
+    }
+
+    if (src) {
+      const match = src.match(/\.([a-z0-9]+)(?:[?#].*)?$/i);
+      if (match) {
+        return match[1].toLowerCase();
+      }
+    }
+
+    return "png";
+  }
+
+  function deriveImageName(cmd, element, containerEl) {
+    if (typeof cmd.name === "string" && cmd.name.trim()) {
+      return cmd.name.trim();
+    }
+
+    if (typeof cmd.nameSelector === "string" && containerEl) {
+      const nameEl = containerEl.querySelector(cmd.nameSelector);
+      if (nameEl && nameEl.textContent) {
+        return cleanText(nameEl.textContent);
+      }
+    }
+
+    if (typeof cmd.nameAttribute === "string") {
+      const attrValue = element.getAttribute(cmd.nameAttribute);
+      if (attrValue) {
+        return attrValue.trim();
+      }
+    }
+
+    const attrFromSelector = extractAttributeName(cmd);
+    if (attrFromSelector) {
+      const attrValue = element.getAttribute(attrFromSelector);
+      if (attrValue) {
+        return attrValue.trim();
+      }
+    }
+
+    const altValue = element.getAttribute("alt");
+    if (altValue) {
+      return altValue.trim();
+    }
+
+    const src = element.currentSrc || element.src || element.getAttribute("src");
+    if (src) {
+      try {
+        const url = new URL(src, window.location.href);
+        const parts = url.pathname.split("/").filter(Boolean);
+        const lastPart = parts[parts.length - 1];
+        if (lastPart) {
+          return lastPart;
+        }
+      } catch (e) {
+        const fallback = src.split("/").filter(Boolean).pop();
+        if (fallback) {
+          return fallback;
+        }
+      }
+    }
+
+    return `image-${Date.now()}`;
+  }
+
+  function arrayBufferToBase64(buffer) {
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
+  }
+
+  async function fetchImageData(src) {
+    if (!src) {
+      return null;
+    }
+
+    if (src.startsWith("data:")) {
+      const commaIndex = src.indexOf(",");
+      const header = src.substring(5, commaIndex >= 0 ? commaIndex : src.length);
+      const [mimePart] = header.split(";");
+      const mimeType = mimePart || "";
+      return {
+        dataUrl: src,
+        contentType: mimeType,
+        sourceUrl: src,
+      };
+    }
+
+    let absoluteUrl = src;
+    try {
+      absoluteUrl = new URL(src, window.location.href).href;
+    } catch (err) {
+      // ignore URL parsing error, use original src
+    }
+
+    try {
+      const response = await fetch(absoluteUrl, { credentials: "include" });
+      if (!response.ok) {
+        console.warn("Failed to fetch image", absoluteUrl, response.status);
+        return null;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const buffer = await response.arrayBuffer();
+      const base64 = arrayBufferToBase64(buffer);
+      const dataUrl = `data:${contentType || "application/octet-stream"};base64,${base64}`;
+
+      return { dataUrl, contentType, sourceUrl: absoluteUrl };
+    } catch (error) {
+      console.warn("Failed to download image", absoluteUrl, error);
+      return null;
+    }
+  }
+
+  async function buildRecordFromElement(element, cmd, containerEl) {
+    if (!element || !cmd) {
       return undefined;
     }
 
@@ -343,6 +501,33 @@ async function contentScriptFunction(item) {
       return element.outerHTML;
     }
 
+    if (type === "img") {
+      const src = element.currentSrc || element.src || element.getAttribute("src");
+      if (!src) {
+        return undefined;
+      }
+
+      const imageMeta = await fetchImageData(src);
+      if (!imageMeta) {
+        return undefined;
+      }
+
+      const rawName = deriveImageName(cmd, element, containerEl);
+      const extension = determineExtensionFromSource(
+        imageMeta.contentType,
+        imageMeta.sourceUrl || src
+      );
+      const fileName = ensureFileExtension(rawName, extension);
+
+      return {
+        fileName,
+        name: rawName,
+        contentType: imageMeta.contentType,
+        dataUrl: imageMeta.dataUrl,
+        sourceUrl: imageMeta.sourceUrl || src,
+      };
+    }
+
     return undefined;
   }
 
@@ -355,44 +540,44 @@ async function contentScriptFunction(item) {
       }
 
       const patentElements = document.querySelectorAll(patentCmd.selector);
-      patentElements.forEach((patentEl) => {
+      for (const patentEl of patentElements) {
         const record = {};
 
-        extractionCommands.forEach((extractCmd) => {
+        for (const extractCmd of extractionCommands) {
           const targetEl = patentEl.querySelector(extractCmd.selector);
           if (!targetEl) {
-            return;
+            continue;
           }
 
-          const value = buildRecordFromElement(targetEl, extractCmd);
+          const value = await buildRecordFromElement(targetEl, extractCmd, patentEl);
           if (value !== undefined) {
             record[extractCmd.name || extractCmd.type] = value;
           }
-        });
+        }
 
         if (Object.keys(record).length > 0) {
           data.push(record);
         }
-      });
+      }
     }
   } else if (extractionCommands.length > 0) {
     const record = {};
 
-    extractionCommands.forEach((extractCmd) => {
+    for (const extractCmd of extractionCommands) {
       if (!extractCmd.selector) {
-        return;
+        continue;
       }
 
       const targetEl = document.querySelector(extractCmd.selector);
       if (!targetEl) {
-        return;
+        continue;
       }
 
-      const value = buildRecordFromElement(targetEl, extractCmd);
+      const value = await buildRecordFromElement(targetEl, extractCmd, document);
       if (value !== undefined) {
         record[extractCmd.name || extractCmd.type] = value;
       }
-    });
+    }
 
     if (Object.keys(record).length > 0) {
       data.push(record);
