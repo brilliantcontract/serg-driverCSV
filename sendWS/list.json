@@ -1,0 +1,4 @@
+[
+{"id":1935362,"url":"https://www.regalrexnord.com/products/bearings/mounted/ball/mounted-cast-iron-two-bolt-pillow-block-ball-bearing-52100-bearing-steel-black-oxided-setscrew-lock-700180 ","requests":[{"type":"tag","name":"GRTT","selector":"div.product-cart"},{"type":"html","name":"BRAND","selector":"h1.longWordBreak "}],"sleep":4000,"flags":["remove-videos","pause-videos","clear-local-storage","clear-session-storage","clear-cookies","disable-animation","disable-indexed-db","disable-web-proxy"],"waitFor":""},
+{"id":1,"url":"https://bearingservice2.oro-cloud.com/product/search?search=FAG-6207-2Z-L038-C3 ","requests":[{"type":"tag","name":"HFER","selector":"h2 a span "},{"type":"html","name":"GDS","selector":"p span.sku-no "}],"sleep":4000,"flags":["remove-videos","pause-videos","clear-local-storage","clear-session-storage","clear-cookies","disable-animation","disable-indexed-db","disable-web-proxy"],"waitFor":""}
+]
