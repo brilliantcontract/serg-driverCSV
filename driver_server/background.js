@@ -399,13 +399,41 @@ async function contentScriptFunction(item) {
     }
   }
 
-  return {
-    id: item.id,
-    timestamp: new Date().toISOString(),
-    url: item.proxifiedUrl || item.url,
-    data,
-  };
+
+  const hasNumberedSelect = Array.isArray(item.requests)
+    ? item.requests.some((cmd) => /^select-\d+$/i.test(cmd.type?.trim()))
+    : false;
+
+  if (hasNumberedSelect) {
+    const finalResults = [];
+
+    if (Array.isArray(responses)) {
+      responses.forEach((group, index) => {
+        if (group && group.length > 0) {
+          finalResults.push({
+            id: `${item.id}-${index}`,
+            timestamp: new Date().toISOString(),
+            url: item.proxifiedUrl || item.url,
+            responses: group
+          });
+        }
+      });
+    }
+
+    return finalResults;
+  } else {
+    return {
+      id: item.id,
+      timestamp: new Date().toISOString(),
+      url: item.proxifiedUrl || item.url,
+      data
+    };
+  }
+
+  return finalResults;
+
 }
+
 
 /************************************************
  * Simple wait function
