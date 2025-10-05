@@ -198,14 +198,29 @@ function saveImageValue(value, baseId, entryIndex, fieldKey) {
 
   const buffer = Buffer.from(base64Payload, 'base64');
 
-  const preferredName =
-    typeof value.fileName === 'string' && value.fileName.trim()
+  const preferredName = (() => {
+    const fromValue = typeof value.fileName === 'string' && value.fileName.trim()
       ? value.fileName.trim()
       : typeof value.name === 'string' && value.name.trim()
         ? value.name.trim()
-        : `${baseId}-${entryIndex}-${fieldKey}`;
+        : null;
 
-  const extension = determineImageExtension(value.contentType || mimeType, value.sourceUrl);
+    if (fromValue) {
+      return fromValue;
+    }
+
+    if (typeof baseId === 'string' || typeof baseId === 'number') {
+      return String(baseId);
+    }
+
+    return `${entryIndex}-${fieldKey}`;
+  })();
+
+  const extensionPreference = typeof value.extension === 'string' && value.extension.trim()
+    ? value.extension.trim().toLowerCase()
+    : null;
+
+  const extension = extensionPreference || determineImageExtension(value.contentType || mimeType, value.sourceUrl);
   const filePath = generateUniqueImagePath(preferredName, extension);
 
   fs.writeFileSync(filePath, buffer);

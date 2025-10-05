@@ -470,6 +470,7 @@ async function contentScriptFunction(item) {
       return {
         dataUrl: pngDataUrl,
         fileName: baseFileName,
+        extension: "png",
         sourceUrl: absoluteUrl,
         contentType: "image/png",
       };
