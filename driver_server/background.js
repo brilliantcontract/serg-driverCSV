@@ -262,7 +262,12 @@ async function contentScriptFunction(item) {
       continue;
     }
 
-    if (cmdType === "attr" || cmdType === "tag" || cmdType === "html") {
+    if (
+      cmdType === "attr" ||
+      cmdType === "tag" ||
+      cmdType === "html" ||
+      cmdType === "img"
+    ) {
       extractionCommands.push(cmd);
       continue;
     }
@@ -313,7 +318,7 @@ async function contentScriptFunction(item) {
     return value.replace(/\s+/g, " ").trim();
   }
 
-  function buildRecordFromElement(element, cmd) {
+  async function buildRecordFromElement(element, cmd) {
     if (!element || !cmd?.name) {
       return undefined;
     }
@@ -343,7 +348,161 @@ async function contentScriptFunction(item) {
       return element.outerHTML;
     }
 
+    if (type === "img") {
+      const imageValue = await captureImageFromElement(element, cmd);
+      return imageValue;
+    }
+
     return undefined;
+  }
+
+  function normaliseUrl(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== "string") {
+      return null;
+    }
+
+    try {
+      return new URL(rawUrl, document.location.href).href;
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  async function blobToPngDataUrl(blob) {
+    if (!blob) {
+      return null;
+    }
+
+    const supportOffscreen =
+      typeof OffscreenCanvas !== "undefined" &&
+      typeof OffscreenCanvas.prototype.convertToBlob === "function";
+
+    if (supportOffscreen && typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await createImageBitmap(blob);
+        const canvas = new OffscreenCanvas(bitmap.width || 1, bitmap.height || 1);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0);
+        const pngBlob = await canvas.convertToBlob({ type: "image/png" });
+        bitmap.close();
+        const arrayBuffer = await pngBlob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = "";
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const chunk = bytes.subarray(i, i + chunkSize);
+          binary += String.fromCharCode.apply(null, chunk);
+        }
+        return `data:image/png;base64,${btoa(binary)}`;
+      } catch (error) {
+        console.warn("Failed to convert image using OffscreenCanvas:", error);
+      }
+    }
+
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(blob);
+      const img = document.createElement("img");
+
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const width = img.naturalWidth || img.width || 1;
+          const height = img.naturalHeight || img.height || 1;
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/png");
+          resolve(dataUrl);
+        } catch (err) {
+          reject(err);
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      };
+
+      img.onerror = (err) => {
+        URL.revokeObjectURL(objectUrl);
+        reject(err);
+      };
+
+      img.src = objectUrl;
+    }).catch((error) => {
+      console.warn("Failed to convert image using fallback canvas:", error);
+      return null;
+    });
+  }
+
+  async function captureImageFromElement(element, cmd) {
+    if (!element) {
+      return undefined;
+    }
+
+    const src =
+      element.currentSrc || element.src || element.getAttribute("src") || "";
+    const absoluteUrl = normaliseUrl(src);
+    if (!absoluteUrl) {
+      return undefined;
+    }
+
+    try {
+      const response = await fetch(absoluteUrl, {
+        mode: "cors",
+        credentials: "omit",
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const pngDataUrl = await blobToPngDataUrl(blob);
+
+      if (!pngDataUrl) {
+        return undefined;
+      }
+
+      const baseFileName =
+        typeof item.id !== "undefined" && item.id !== null
+          ? String(item.id)
+          : cmd.name || "image";
+
+      return {
+        dataUrl: pngDataUrl,
+        fileName: baseFileName,
+        sourceUrl: absoluteUrl,
+        contentType: "image/png",
+      };
+    } catch (error) {
+      console.warn("Failed to capture image:", error);
+      return undefined;
+    }
+  }
+
+  async function extractValuesFromContext(context, commands) {
+    const record = {};
+
+    for (const extractCmd of commands) {
+      if (!extractCmd.selector) {
+        continue;
+      }
+
+      if (typeof context.querySelector !== "function") {
+        continue;
+      }
+
+      const targetEl = context.querySelector(extractCmd.selector);
+      if (!targetEl) {
+        continue;
+      }
+
+      const value = await buildRecordFromElement(targetEl, extractCmd);
+      if (value !== undefined) {
+        record[extractCmd.name || extractCmd.type] = value;
+      }
+    }
+
+    return record;
   }
 
   const data = [];
@@ -355,44 +514,19 @@ async function contentScriptFunction(item) {
       }
 
       const patentElements = document.querySelectorAll(patentCmd.selector);
-      patentElements.forEach((patentEl) => {
-        const record = {};
-
-        extractionCommands.forEach((extractCmd) => {
-          const targetEl = patentEl.querySelector(extractCmd.selector);
-          if (!targetEl) {
-            return;
-          }
-
-          const value = buildRecordFromElement(targetEl, extractCmd);
-          if (value !== undefined) {
-            record[extractCmd.name || extractCmd.type] = value;
-          }
-        });
+      for (const patentEl of patentElements) {
+        const record = await extractValuesFromContext(
+          patentEl,
+          extractionCommands
+        );
 
         if (Object.keys(record).length > 0) {
           data.push(record);
         }
-      });
+      }
     }
   } else if (extractionCommands.length > 0) {
-    const record = {};
-
-    extractionCommands.forEach((extractCmd) => {
-      if (!extractCmd.selector) {
-        return;
-      }
-
-      const targetEl = document.querySelector(extractCmd.selector);
-      if (!targetEl) {
-        return;
-      }
-
-      const value = buildRecordFromElement(targetEl, extractCmd);
-      if (value !== undefined) {
-        record[extractCmd.name || extractCmd.type] = value;
-      }
-    });
+    const record = await extractValuesFromContext(document, extractionCommands);
 
     if (Object.keys(record).length > 0) {
       data.push(record);
