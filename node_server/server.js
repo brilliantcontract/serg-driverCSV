@@ -12,6 +12,11 @@ if (!fs.existsSync(folderName)) {
   fs.mkdirSync(folderName, { recursive: true });
 }
 
+const imageFolderName = 'images';
+if (!fs.existsSync(imageFolderName)) {
+  fs.mkdirSync(imageFolderName, { recursive: true });
+}
+
 const dataFilePath = path.join(folderName, 'data.csv');
 
 function normaliseValue(value) {
@@ -107,6 +112,124 @@ function writeCsvFile(filePath, headers, rows) {
   fs.writeFileSync(filePath, `${csvContent}\n`);
 }
 
+function sanitizeFileNameSegment(segment) {
+  if (!segment) {
+    return '';
+  }
+
+  return segment.replace(/[\\/:*?"<>|\s]+/g, '_');
+}
+
+function ensureImageExtension(fileName, extension) {
+  if (!extension) {
+    return sanitizeFileNameSegment(fileName);
+  }
+
+  const sanitized = sanitizeFileNameSegment(fileName);
+  if (new RegExp(`\\.${extension}$`, 'i').test(sanitized)) {
+    return sanitized;
+  }
+
+  return `${sanitized}.${extension}`;
+}
+
+function determineImageExtension(contentType, sourceUrl) {
+  if (contentType) {
+    const mime = contentType.split(';')[0].trim().toLowerCase();
+    const mimeMap = {
+      'image/jpeg': 'jpg',
+      'image/jpg': 'jpg',
+      'image/png': 'png',
+      'image/gif': 'gif',
+      'image/webp': 'webp',
+      'image/svg+xml': 'svg',
+      'image/bmp': 'bmp',
+      'image/x-icon': 'ico',
+      'image/vnd.microsoft.icon': 'ico',
+    };
+
+    if (mimeMap[mime]) {
+      return mimeMap[mime];
+    }
+  }
+
+  if (sourceUrl) {
+    const match = sourceUrl.match(/\.([a-z0-9]+)(?:[?#].*)?$/i);
+    if (match) {
+      return match[1].toLowerCase();
+    }
+  }
+
+  return 'png';
+}
+
+function generateUniqueImagePath(baseName, extension) {
+  const base = sanitizeFileNameSegment(baseName) || 'image';
+  let candidate = ensureImageExtension(base, extension);
+  let counter = 1;
+
+  while (fs.existsSync(path.join(imageFolderName, candidate))) {
+    candidate = ensureImageExtension(`${base}-${counter}`, extension);
+    counter += 1;
+  }
+
+  return path.join(imageFolderName, candidate);
+}
+
+function saveImageValue(value, baseId, entryIndex, fieldKey) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : null;
+  if (!dataUrl || !dataUrl.startsWith('data:')) {
+    return null;
+  }
+
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, mimeType, base64Payload] = match;
+  if (!base64Payload) {
+    return null;
+  }
+
+  const buffer = Buffer.from(base64Payload, 'base64');
+
+  const preferredName =
+    typeof value.fileName === 'string' && value.fileName.trim()
+      ? value.fileName.trim()
+      : typeof value.name === 'string' && value.name.trim()
+        ? value.name.trim()
+        : `${baseId}-${entryIndex}-${fieldKey}`;
+
+  const extension = determineImageExtension(value.contentType || mimeType, value.sourceUrl);
+  const filePath = generateUniqueImagePath(preferredName, extension);
+
+  fs.writeFileSync(filePath, buffer);
+
+  return path.relative('.', filePath);
+}
+
+function processEntryImages(entry, baseId, entryIndex) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return entry;
+  }
+
+  const processed = { ...entry };
+
+  Object.keys(processed).forEach((key) => {
+    const savedPath = saveImageValue(processed[key], baseId, entryIndex, key);
+    if (savedPath) {
+      processed[key] = savedPath;
+    }
+  });
+
+  return processed;
+}
+
 app.post('/scrape_data', (req, res) => {
   try {
     const { l_scraped_data } = req.body;
@@ -115,13 +238,20 @@ app.post('/scrape_data', (req, res) => {
       return res.status(400).json({ error: 'Missing l_scraped_data field' });
     }
 
-    const parsedData = JSON.parse(l_scraped_data);
+    let parsedData = JSON.parse(l_scraped_data);
+
+    const baseId = !Array.isArray(parsedData) && parsedData?.id
+      ? parsedData.id
+      : `data_${Date.now()}`;
 
     let payloadArray = [];
     let baseMetadata = {};
 
     if (Array.isArray(parsedData)) {
-      payloadArray = parsedData.map((entry) => {
+      const processedArray = parsedData.map((entry, index) => processEntryImages(entry, baseId, index));
+      parsedData = processedArray;
+
+      payloadArray = processedArray.map((entry) => {
         if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
           return { ...entry };
         }
@@ -130,18 +260,25 @@ app.post('/scrape_data', (req, res) => {
       });
     } else if (parsedData && typeof parsedData === 'object') {
       const { data, ...rest } = parsedData;
-      baseMetadata = rest;
+      baseMetadata = processEntryImages(rest, baseId, 'meta');
 
       if (Array.isArray(data)) {
-        payloadArray = data.map((entry) => {
+        const processedDataArray = data.map((entry, index) => processEntryImages(entry, baseId, index));
+        parsedData = { ...baseMetadata, data: processedDataArray };
+
+        payloadArray = processedDataArray.map((entry) => {
           if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
             return { ...baseMetadata, ...entry };
           }
 
           return { ...baseMetadata, value: normaliseValue(entry) };
         });
-      } else if (Object.keys(baseMetadata).length > 0) {
-        payloadArray = [{ ...baseMetadata }];
+      } else {
+        parsedData = { ...baseMetadata, data };
+
+        if (Object.keys(baseMetadata).length > 0) {
+          payloadArray = [{ ...baseMetadata }];
+        }
       }
     }
 
@@ -185,7 +322,6 @@ app.post('/scrape_data', (req, res) => {
       writeCsvFile(dataFilePath, headers, [...reconciledExistingRows, ...newRows]);
     }
 
-    const baseId = !Array.isArray(parsedData) && parsedData?.id ? parsedData.id : `data_${Date.now()}`;
     const fileName = `${baseId}.json`;
     const filePath = path.join(folderName, fileName);
 
