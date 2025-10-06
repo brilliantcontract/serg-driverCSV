@@ -277,8 +277,8 @@ async function saveImageValue(value, baseId, entryIndex, fieldKey) {
 
   const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : null;
   const directUrl = typeof value.sourceUrl === 'string' && value.sourceUrl.trim()
-  ? value.sourceUrl.trim()
-  : null;
+    ? value.sourceUrl.trim()
+    : null;
 
   if (dataUrl && dataUrl.startsWith('data:')) {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
@@ -323,6 +323,24 @@ function isPlainObject(value) {
   return Object.prototype.toString.call(value) === '[object Object]';
 }
 
+function isImageDescriptor(value) {
+  return (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof value.type === 'string' &&
+    value.type.trim().toLowerCase() === 'img'
+  );
+}
+
+function isDirectImagePayload(value) {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every((entry) => isDirectImagePayload(entry));
+  }
+
+  return isImageDescriptor(value);
+}
+
 async function processImageValue(value, baseId, entryIndex, fieldPath) {
   const savedPath = await saveImageValue(value, baseId, entryIndex, fieldPath);
   if (savedPath) {
@@ -363,11 +381,25 @@ app.post('/scrape_data', async (req, res) => {
       return res.status(400).json({ error: 'Missing l_scraped_data field' });
     }
 
+    const originalPayload = JSON.parse(l_scraped_data);
     let parsedData = JSON.parse(l_scraped_data);
 
     const baseId = !Array.isArray(parsedData) && parsedData?.id
       ? parsedData.id
       : `data_${Date.now()}`;
+
+    if (isDirectImagePayload(originalPayload)) {
+      if (Array.isArray(parsedData)) {
+        for (let index = 0; index < parsedData.length; index += 1) {
+          await processImageValue(parsedData[index], baseId, index, '');
+        }
+      } else {
+        await processImageValue(parsedData, baseId, 'image', '');
+      }
+
+      console.log('Image payload received. Skipped JSON and CSV persistence.');
+      return res.status(200).json({ success: true, skippedPersistence: true });
+    }
 
     let payloadArray = [];
     let baseMetadata = {};
