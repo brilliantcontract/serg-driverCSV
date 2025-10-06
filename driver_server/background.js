@@ -468,6 +468,8 @@ async function contentScriptFunction(item) {
           : cmd.name || "image";
 
       return {
+        type: "img",
+        name: cmd?.name || cmd?.type || "image",
         dataUrl: pngDataUrl,
         fileName: baseFileName,
         extension: "png",

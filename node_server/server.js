@@ -276,6 +276,9 @@ async function saveImageValue(value, baseId, entryIndex, fieldKey) {
     : null;
 
   const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : null;
+  const directUrl = typeof value.sourceUrl === 'string' && value.sourceUrl.trim()
+  ? value.sourceUrl.trim()
+  : null;
 
   if (dataUrl && dataUrl.startsWith('data:')) {
     const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
