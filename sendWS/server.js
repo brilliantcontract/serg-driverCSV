@@ -86,7 +86,7 @@ async function runServer() {
       const next = groupedDataQueue.shift();
       broadcast(next);
       console.log("📤 Sent to extension - 1");
-    }, 4000);
+    }, 1000);
 
     console.log("✅ Ready. Sending one instruction");
   } catch (err) {

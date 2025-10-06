@@ -560,9 +560,9 @@ async function contentScriptFunction(item) {
     
             results.push({
               type: "img",
-              name: `${imageName}-img`,
+              name: imageName,
               dataUrl: originalDataUrl,
-              fileName: `${baseFileName}-img`,
+              fileName: baseFileName,
               extension: inferredExtension,
               sourceUrl: absoluteUrl,
               contentType: mimeType,
