@@ -58,93 +58,109 @@ function openAndScrape(item) {
 
     const newItem = { ...item, proxifiedUrl };
 
-    chrome.tabs.create({ url: proxifiedUrl, active: false }, (tab) => {
-      if (!tab || !tab.id) {
-        return reject(`Failed to create tab for: ${proxifiedUrl}`);
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        return reject(
+          `Failed to retrieve the active tab: ${chrome.runtime.lastError.message}`
+        );
       }
 
-      const tabId = tab.id;
-      let didLoad = false;
+      const activeTab = Array.isArray(tabs) ? tabs[0] : null;
 
-      const loadTimeout = setTimeout(async () => {
-        if (!didLoad) {
-          console.warn("Page load timeout:", proxifiedUrl);
-          try {
-            await chrome.tabs.remove(tabId);
-          } catch { }
-          console.warn("Page load timeout:", proxifiedUrl);
+      if (!activeTab || !activeTab.id) {
+        return reject("No active tab available to load scraping target");
+      }
+
+      const tabId = activeTab.id;
+
+      chrome.tabs.update(tabId, { url: proxifiedUrl, active: true }, (tab) => {
+        if (chrome.runtime.lastError) {
+          return reject(
+            `Failed to navigate active tab: ${chrome.runtime.lastError.message}`
+          );
         }
-      }, 100000);
 
-      // This listener waits until tab finishes loading
-      const onUpdated = async (updatedTabId, changeInfo) => {
-        if (updatedTabId === tabId && changeInfo.status === "complete") {
-          didLoad = true;
-          chrome.tabs.onUpdated.removeListener(onUpdated);
+        if (!tab) {
+          return reject(`Failed to load url in active tab: ${proxifiedUrl}`);
+        }
 
-          if (item.sleep) {
-            await waitMs(item.sleep);
+        let didLoad = false;
+
+        const loadTimeout = setTimeout(() => {
+          if (!didLoad) {
+            console.warn("Page load timeout:", proxifiedUrl);
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            reject(`Page load timeout for: ${proxifiedUrl}`);
           }
+        }, 100000);
 
-          try {
-            const result = await Promise.race([
-              new Promise((res, rej) => {
-                chrome.scripting.executeScript(
-                  {
-                    target: { tabId },
-                    func: contentScriptFunction,
-                    args: [newItem],
-                  },
-                  (responses) => {
-                    if (chrome.runtime.lastError) {
-                      return rej(chrome.runtime.lastError.message);
-                    }
-                    if (!responses || !responses[0] || responses[0].error) {
-                      return rej(
-                        responses?.[0]?.error || "No result from content script"
-                      );
-                    }
-                    res(responses[0].result);
-                  }
-                );
-              })
-            ]);
+        // This listener waits until tab finishes loading
+        const onUpdated = async (updatedTabId, changeInfo) => {
+          if (updatedTabId === tabId && changeInfo.status === "complete") {
+            didLoad = true;
+            chrome.tabs.onUpdated.removeListener(onUpdated);
 
-            console.log("Scraped data:", result);
-
-            if (!result) {
-              throw new Error("Scraped data is null or undefined.");
+            if (item.sleep) {
+              await waitMs(item.sleep);
             }
 
-            await sendDataToServer(result);
-
-            const waiter = Array.isArray(item.requests)
-              ? item.requests.find(
-                (cmd) => cmd.type?.toLowerCase().trim() === "waiter"
-              )
-              : null;
-
-            if (waiter && !isNaN(waiter.time)) {
-              console.log(`Post-script wait for ${waiter.time} ms...`);
-              await waitMs(waiter.time);
-            }
-
-            await chrome.tabs.remove(tabId);
-            clearTimeout(loadTimeout);
-            resolve(result);
-
-          } catch (err) {
-            console.warn("Error during content script execution:", err);
             try {
-              await chrome.tabs.remove(tabId);
-              clearTimeout(loadTimeout);
-            } catch { }
-            reject(err);
-          }
-        }
-      };
+              const result = await Promise.race([
+                new Promise((res, rej) => {
+                  chrome.scripting.executeScript(
+                    {
+                      target: { tabId },
+                      func: contentScriptFunction,
+                      args: [newItem],
+                    },
+                    (responses) => {
+                      if (chrome.runtime.lastError) {
+                        return rej(chrome.runtime.lastError.message);
+                      }
+                      if (!responses || !responses[0] || responses[0].error) {
+                        return rej(
+                          responses?.[0]?.error || "No result from content script"
+                        );
+                      }
+                      res(responses[0].result);
+                    }
+                  );
+                })
+              ]);
 
-      chrome.tabs.onUpdated.addListener(onUpdated);
+              console.log("Scraped data:", result);
+
+              if (!result) {
+                throw new Error("Scraped data is null or undefined.");
+              }
+
+              await sendDataToServer(result);
+
+              const waiter = Array.isArray(item.requests)
+                ? item.requests.find(
+                  (cmd) => cmd.type?.toLowerCase().trim() === "waiter"
+                )
+                : null;
+
+              if (waiter && !isNaN(waiter.time)) {
+                console.log(`Post-script wait for ${waiter.time} ms...`);
+                await waitMs(waiter.time);
+              }
+
+              clearTimeout(loadTimeout);
+              resolve(result);
+
+            } catch (err) {
+              console.warn("Error during content script execution:", err);
+              chrome.tabs.onUpdated.removeListener(onUpdated);
+              clearTimeout(loadTimeout);
+              reject(err);
+            }
+          }
+        };
+
+        chrome.tabs.onUpdated.addListener(onUpdated);
+      });
     });
   });
 }
