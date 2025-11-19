@@ -9,6 +9,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     handleScrapeInstructions(instructions)
       .then(() => {
         console.log({ status: "All scraping tasks completed successfully." });
+        sendResponse({ status: "success" });
       })
       .catch((err) => {
         sendResponse({ status: "error", message: err.toString() });
@@ -100,8 +101,14 @@ function openAndScrape(item) {
             didLoad = true;
             chrome.tabs.onUpdated.removeListener(onUpdated);
 
-            if (item.sleep) {
-              await waitMs(item.sleep);
+            const timerDelay = Number(item.timerDelay);
+            if (!Number.isNaN(timerDelay) && timerDelay > 0) {
+              await waitMs(timerDelay);
+            } else if (item.sleep) {
+              const sleepDelay = Number(item.sleep);
+              if (!Number.isNaN(sleepDelay) && sleepDelay > 0) {
+                await waitMs(sleepDelay);
+              }
             }
 
             try {
