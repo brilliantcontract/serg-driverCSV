@@ -581,29 +581,67 @@ async function contentScriptFunction(item) {
   }
 
   async function extractValuesFromContext(context, commands) {
-    const record = {};
+    if (!commands.length) {
+      return [];
+    }
+
+    if (typeof context.querySelectorAll !== "function") {
+      return [];
+    }
+
+    const collectedValues = new Map();
+    let maxLength = 0;
 
     for (const extractCmd of commands) {
       if (!extractCmd.selector) {
         continue;
       }
 
-      if (typeof context.querySelector !== "function") {
+      const elements = context.querySelectorAll(extractCmd.selector);
+      if (!elements || elements.length === 0) {
         continue;
       }
 
-      const targetEl = context.querySelector(extractCmd.selector);
-      if (!targetEl) {
+      const fieldName = extractCmd.name || extractCmd.type;
+      const values = [];
+
+      for (const element of elements) {
+        const value = await buildRecordFromElement(element, extractCmd);
+        if (value !== undefined) {
+          values.push(value);
+        }
+      }
+
+      if (values.length === 0) {
         continue;
       }
 
-      const value = await buildRecordFromElement(targetEl, extractCmd);
-      if (value !== undefined) {
-        record[extractCmd.name || extractCmd.type] = value;
+      collectedValues.set(fieldName, values);
+      if (values.length > maxLength) {
+        maxLength = values.length;
       }
     }
 
-    return record;
+    if (maxLength === 0) {
+      return [];
+    }
+
+    const records = [];
+    for (let index = 0; index < maxLength; index += 1) {
+      const record = {};
+
+      for (const [fieldName, values] of collectedValues.entries()) {
+        if (index < values.length) {
+          record[fieldName] = values[index];
+        }
+      }
+
+      if (Object.keys(record).length > 0) {
+        records.push(record);
+      }
+    }
+
+    return records;
   }
 
   const data = [];
@@ -616,21 +654,25 @@ async function contentScriptFunction(item) {
 
       const patentElements = document.querySelectorAll(patentCmd.selector);
       for (const patentEl of patentElements) {
-        const record = await extractValuesFromContext(
+        const records = await extractValuesFromContext(
           patentEl,
           extractionCommands
         );
 
-        if (Object.keys(record).length > 0) {
-          data.push(record);
+        for (const record of records) {
+          if (Object.keys(record).length > 0) {
+            data.push(record);
+          }
         }
       }
     }
   } else if (extractionCommands.length > 0) {
-    const record = await extractValuesFromContext(document, extractionCommands);
+    const records = await extractValuesFromContext(document, extractionCommands);
 
-    if (Object.keys(record).length > 0) {
-      data.push(record);
+    for (const record of records) {
+      if (Object.keys(record).length > 0) {
+        data.push(record);
+      }
     }
   }
 
@@ -657,7 +699,7 @@ async function sendDataToServer(scrapedData) {
     l_scraped_data: JSON.stringify(scrapedData),
   };
 
-  const resp = await fetch("http://localhost:3010/scrape_data", {
+  const resp = await fetch("http://localhost:3015/scrape_data", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
