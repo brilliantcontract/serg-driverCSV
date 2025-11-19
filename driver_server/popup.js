@@ -1,89 +1,91 @@
-const wsUrls = ["ws://localhost:8016"];
-const wsClients = {};
-const reconnectInterval = 1000; // 1 second
+const sendButton = document.getElementById("send");
+const timerInput = document.getElementById("timer");
 
-function connectWebSocket(url) {
-  console.log(`Connecting to WebSocket: ${url}`);
+let cachedInstructions = null;
+let isProcessing = false;
 
-  const ws = new WebSocket(url);
-
-  function pingRequestToWebSocketServer(socket) {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      const ts = Date.now();
-      socket.send(JSON.stringify({ type: "ping", pingTime: ts }));
-      console.log("Ping sent:", ts);
-    }
+async function loadInstructions() {
+  if (cachedInstructions) {
+    return cachedInstructions;
   }
 
-  function sendStart() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "start server" }));
-      console.log("📤 Sent: start server");
-    } else {
-      console.warn("❌ WebSocket not open yet. Cannot send start signal.");
-    }
+  const url = chrome.runtime.getURL("list.json");
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Не удалось загрузить list.json: ${response.status}`);
   }
 
-  // ✅ Attach click listener correctly
-  document.getElementById("send").addEventListener("click", sendStart);
+  const instructions = await response.json();
+  if (!Array.isArray(instructions)) {
+    throw new Error("list.json должен содержать массив объектов");
+  }
 
-  ws.onopen = () => {
-    console.log(`✅ Connected to WebSocket: ${url}`);
-    ws.pingTimer = setInterval(() => pingRequestToWebSocketServer(ws), 9000);
-    wsClients[url] = ws;
-  };
+  cachedInstructions = instructions;
+  return instructions;
+}
 
-  ws.onmessage = (event) => {
-    try {
-      const parsedData = JSON.parse(event.data);
+function getTimerDelay() {
+  const value = Number(timerInput?.value || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
 
-      if (parsedData.type === "pong") {
-        console.log("📡 pong:", parsedData.pongTime);
-        return;
-      }
-
-      console.log(parsedData);
-
-      chrome.runtime.sendMessage(
-        { type: "START_SCRAPE", payload: parsedData },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.error("❌ Error sending to background:", chrome.runtime.lastError.message);
-            return;
-          }
-          console.log("✅ Background response:", response);
-          alert(response.status);
+function sendInstructionToBackground(instruction, delayAfterLoad) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "START_SCRAPE",
+        payload: { ...instruction, timerDelay: delayAfterLoad },
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
         }
-      );
-    } catch (err) {
-      console.error(`🚨 Error parsing message from ${url}:`, err);
-    }
-  };
 
-  ws.onclose = () => {
-    console.log(`⚠️ WebSocket closed: ${url}. Reconnecting in ${reconnectInterval / 1000}s...`);
-    clearInterval(ws.pingTimer);
-    setTimeout(() => reconnectWebSocket(url), reconnectInterval);
-  };
+        if (!response) {
+          reject(new Error("Нет ответа от background.js"));
+          return;
+        }
 
-ws.onerror = (event) => {
-  console.error("❌ WebSocket error event:", {
-    type: event.type,
-    message: event.message,
-    target: event.target,
+        if (response.status !== "success") {
+          reject(new Error(response.message || "Задача завершилась с ошибкой"));
+          return;
+        }
+
+        resolve(response);
+      }
+    );
   });
-};
-
-
-  wsClients[url] = ws;
 }
 
-function reconnectWebSocket(url) {
-  if (wsClients[url]) {
-    wsClients[url].close();
+async function processQueue() {
+  if (isProcessing) {
+    alert("Очередь уже обрабатывается");
+    return;
   }
-  connectWebSocket(url);
+
+  try {
+    isProcessing = true;
+    sendButton.disabled = true;
+
+    const instructions = await loadInstructions();
+    const delayAfterLoad = getTimerDelay();
+
+    for (const instruction of instructions) {
+      await sendInstructionToBackground(instruction, delayAfterLoad);
+    }
+
+    alert("Все задания из list.json обработаны");
+  } catch (error) {
+    console.error("Ошибка при обработке очереди:", error);
+    alert(error.message || "Произошла ошибка при запуске задач");
+  } finally {
+    isProcessing = false;
+    sendButton.disabled = false;
+  }
 }
 
-// Connect to all URLs on load
-wsUrls.forEach(connectWebSocket);
+sendButton?.addEventListener("click", () => {
+  processQueue();
+});
