@@ -397,9 +397,15 @@ async function contentScriptFunction(item) {
           continue;
         }
 
-        let matched;
+        let matched = [];
         try {
-          matched = Array.from(searchRoot.querySelectorAll(baseSelector));
+          // Include the search root itself when it satisfies the selector so
+          // patterns like "next:div" correctly capture the direct sibling.
+          if (searchRoot.matches && searchRoot.matches(baseSelector)) {
+            matched.push(searchRoot);
+          }
+
+          matched.push(...searchRoot.querySelectorAll(baseSelector));
         } catch (error) {
           console.warn(`Invalid selector '${baseSelector}':`, error);
           continue;
