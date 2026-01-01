@@ -399,13 +399,17 @@ async function contentScriptFunction(item) {
 
         let matched = [];
         try {
-          // Include the search root itself when it satisfies the selector so
-          // patterns like "next:div" correctly capture the direct sibling.
+          // When using the custom "next:" prefix we only want the immediate
+          // sibling, not every descendant that also matches the selector. This
+          // prevents a segment such as "next:div" from greedily collecting all
+          // nested DIVs before the following selector segments are applied.
           if (searchRoot.matches && searchRoot.matches(baseSelector)) {
             matched.push(searchRoot);
           }
 
-          matched.push(...searchRoot.querySelectorAll(baseSelector));
+          if (!isNextSibling) {
+            matched.push(...searchRoot.querySelectorAll(baseSelector));
+          }
         } catch (error) {
           console.warn(`Invalid selector '${baseSelector}':`, error);
           continue;
