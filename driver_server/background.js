@@ -406,9 +406,27 @@ async function contentScriptFunction(item) {
         }
 
         if (textNeedle) {
-          matched = matched.filter((node) =>
-            (node.textContent || "").toLowerCase().includes(textNeedle)
-          );
+          const hasText = (el) =>
+            (el?.textContent || "").toLowerCase().includes(textNeedle);
+
+          matched = matched.filter((node) => {
+            if (hasText(node)) {
+              return true;
+            }
+
+            // Allow patterns like "label:has-text('Street:') + value" by checking
+            // text on previous siblings when the target node itself doesn't
+            // contain the label text.
+            let sibling = node.previousElementSibling;
+            while (sibling) {
+              if (hasText(sibling)) {
+                return true;
+              }
+              sibling = sibling.previousElementSibling;
+            }
+
+            return false;
+          });
         }
 
         nextContexts.push(...matched);
