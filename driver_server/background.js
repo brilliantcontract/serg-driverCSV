@@ -347,6 +347,12 @@ async function contentScriptFunction(item) {
   // 2) Segments separated by " >> " allow step-by-step scoping; segments
   //    prefixed with "next:" switch the search root to the next sibling of the
   //    current context before applying the selector.
+  //
+  // Example: "#contenu >> h3:has-text('Officers') >> next:div >> p.principal"
+  //  - finds the #contenu section
+  //  - within it, picks the H3 whose text contains "Officers"
+  //  - moves to the next sibling DIV after that H3
+  //  - then selects the descendant paragraphs with the .principal class
   function queryElements(selector, context = document) {
     if (typeof selector !== "string" || !selector.trim()) {
       return [];
@@ -634,45 +640,45 @@ async function contentScriptFunction(item) {
           ? String(item.id)
           : cmd.name || "image";
 
-          const imageName = cmd?.name || cmd?.type || "image";
-          const results = [];
-    
-          if (pngDataUrl) {
-            results.push({
-              type: "img",
-              name: imageName,
-              dataUrl: pngDataUrl,
-              fileName: baseFileName,
-              extension: "png",
-              sourceUrl: absoluteUrl,
-              contentType: "image/png",
-            });
-          }
-    
-          if (originalDataUrl) {
-            const responseContentType = response.headers.get("content-type");
-            const mimeType = blob.type || responseContentType || "application/octet-stream";
-            const inferredExtension =
-              inferExtensionFromContentType(mimeType) ||
-              inferExtensionFromUrl(absoluteUrl) ||
-              "img";
-    
-            results.push({
-              type: "img",
-              name: imageName,
-              dataUrl: originalDataUrl,
-              fileName: baseFileName,
-              extension: inferredExtension,
-              sourceUrl: absoluteUrl,
-              contentType: mimeType,
-            });
-          }
-    
-          if (results.length === 1) {
-            return results[0];
-          }
-    
-          return results;
+      const imageName = cmd?.name || cmd?.type || "image";
+      const results = [];
+
+      if (pngDataUrl) {
+        results.push({
+          type: "img",
+          name: imageName,
+          dataUrl: pngDataUrl,
+          fileName: baseFileName,
+          extension: "png",
+          sourceUrl: absoluteUrl,
+          contentType: "image/png",
+        });
+      }
+
+      if (originalDataUrl) {
+        const responseContentType = response.headers.get("content-type");
+        const mimeType = blob.type || responseContentType || "application/octet-stream";
+        const inferredExtension =
+          inferExtensionFromContentType(mimeType) ||
+          inferExtensionFromUrl(absoluteUrl) ||
+          "img";
+
+        results.push({
+          type: "img",
+          name: imageName,
+          dataUrl: originalDataUrl,
+          fileName: baseFileName,
+          extension: inferredExtension,
+          sourceUrl: absoluteUrl,
+          contentType: mimeType,
+        });
+      }
+
+      if (results.length === 1) {
+        return results[0];
+      }
+
+      return results;
     } catch (error) {
       console.warn("Failed to capture image:", error);
       return undefined;
