@@ -400,6 +400,13 @@ async function contentScriptFunction(item) {
         let matched;
         try {
           matched = Array.from(searchRoot.querySelectorAll(baseSelector));
+
+          if (
+            typeof searchRoot.matches === "function" &&
+            searchRoot.matches(baseSelector)
+          ) {
+            matched.unshift(searchRoot);
+          }
         } catch (error) {
           console.warn(`Invalid selector '${baseSelector}':`, error);
           continue;
