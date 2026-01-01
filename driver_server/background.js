@@ -296,13 +296,13 @@ async function contentScriptFunction(item) {
     }
 
     if (cmdType === "click") {
-      const els = document.querySelectorAll(cmd.selector);
+      const els = queryElements(cmd.selector, document);
       els.forEach((el) => el.click());
       continue;
     }
 
     if (cmdType === "fill") {
-      const els = document.querySelectorAll(cmd.selector);
+      const els = queryElements(cmd.selector, document);
       els.forEach((el) => {
         el.value = cmd.value;
         el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -339,6 +339,82 @@ async function contentScriptFunction(item) {
       return value;
     }
     return value.replace(/\s+/g, " ").trim();
+  }
+
+  // Supports basic CSS selectors plus two extensions:
+  // 1) :has-text("value") filters matched nodes by inner text containing the
+  //    provided value (case-insensitive).
+  // 2) Segments separated by " >> " allow step-by-step scoping; segments
+  //    prefixed with "next:" switch the search root to the next sibling of the
+  //    current context before applying the selector.
+  function queryElements(selector, context = document) {
+    if (typeof selector !== "string" || !selector.trim()) {
+      return [];
+    }
+
+    const segments = selector
+      .split(">>")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    let contexts = [context];
+
+    for (const rawSegment of segments) {
+      const segment = rawSegment.trim();
+      if (!segment) {
+        return [];
+      }
+
+      const isNextSibling = segment.toLowerCase().startsWith("next:");
+      const selectorBody = isNextSibling
+        ? segment.slice("next:".length).trim()
+        : segment;
+
+      const hasTextMatch = selectorBody.match(/:has-text\(("|')(.*?)(\1)\)/i);
+      const textNeedle = hasTextMatch?.[2]?.toLowerCase();
+      const baseSelector = hasTextMatch
+        ? selectorBody.replace(hasTextMatch[0], "").trim() || "*"
+        : selectorBody;
+
+      const nextContexts = [];
+
+      for (const ctx of contexts) {
+        if (!ctx) {
+          continue;
+        }
+
+        const searchRoot = isNextSibling
+          ? ctx.nextElementSibling || null
+          : ctx;
+
+        if (!searchRoot) {
+          continue;
+        }
+
+        let matched;
+        try {
+          matched = Array.from(searchRoot.querySelectorAll(baseSelector));
+        } catch (error) {
+          console.warn(`Invalid selector '${baseSelector}':`, error);
+          continue;
+        }
+
+        if (textNeedle) {
+          matched = matched.filter((node) =>
+            (node.textContent || "").toLowerCase().includes(textNeedle)
+          );
+        }
+
+        nextContexts.push(...matched);
+      }
+
+      contexts = nextContexts;
+      if (contexts.length === 0) {
+        break;
+      }
+    }
+
+    return contexts;
   }
 
   async function buildRecordFromElement(element, cmd) {
@@ -620,7 +696,7 @@ async function contentScriptFunction(item) {
         continue;
       }
 
-      const elements = context.querySelectorAll(extractCmd.selector);
+      const elements = queryElements(extractCmd.selector, context);
       if (!elements || elements.length === 0) {
         continue;
       }
@@ -675,7 +751,7 @@ async function contentScriptFunction(item) {
         continue;
       }
 
-      const patentElements = document.querySelectorAll(patentCmd.selector);
+      const patentElements = queryElements(patentCmd.selector, document);
       for (const patentEl of patentElements) {
         const records = await extractValuesFromContext(
           patentEl,
