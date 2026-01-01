@@ -424,18 +424,10 @@ async function contentScriptFunction(item) {
               return true;
             }
 
-            // Allow patterns like "label:has-text('Street:') + value" by checking
-            // text on previous siblings when the target node itself doesn't
-            // contain the label text.
-            let sibling = node.previousElementSibling;
-            while (sibling) {
-              if (hasText(sibling)) {
-                return true;
-              }
-              sibling = sibling.previousElementSibling;
-            }
-
-            return false;
+            // Allow simple patterns like "label:has-text('Street:') + value" by
+            // also checking the immediate previous sibling for the label text.
+            const sibling = node.previousElementSibling;
+            return Boolean(sibling && hasText(sibling));
           });
         }
 
