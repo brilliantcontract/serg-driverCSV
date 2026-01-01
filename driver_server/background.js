@@ -741,6 +741,16 @@ async function contentScriptFunction(item) {
         continue;
       }
 
+      // When a selector matches multiple elements we want to store the collected
+      // values in a single field, separated by the "◙" symbol. This keeps all
+      // related data together instead of spreading it across multiple records.
+      if (values.length > 1) {
+        const joinedValue = values
+          .map((val) => (typeof val === "string" ? val : JSON.stringify(val)))
+          .join("◙");
+        values.splice(0, values.length, joinedValue);
+      }
+
       collectedValues.set(fieldName, values);
       if (values.length > maxLength) {
         maxLength = values.length;
