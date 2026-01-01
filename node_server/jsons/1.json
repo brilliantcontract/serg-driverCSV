@@ -1,14 +1,18 @@
 {
   "id": 1,
-  "timestamp": "2026-01-01T16:51:03.318Z",
+  "timestamp": "2026-01-01T17:02:50.192Z",
   "url": "https://www.whed.net/detail_institution.php?Jzo2MF0sUzxZLGBgYApgCg==",
   "data": [
     {
+      "ADDRESS_CITY": "Dnipro",
+      "ADDRESS_PROVINCE": "Dnipropetrovsk Region",
+      "ADDRESS_STREET": "vul. Naberezhna Lenina 18",
       "CODE": "IAU-003790",
-      "PERIODICALS": "Academy Review",
+      "POST_CODE": "49000",
       "SUBTITLE": "Universitet im Al'freda NobeljaDnipropetrovs'kij Universitet im Al'freda Nobelja (DUEL)",
       "TITLE": "Alfred Nobel University",
-      "URL": "https://www.whed.net/institutions/IAU-003790"
+      "URL": "https://www.whed.net/institutions/IAU-003790",
+      "WWW": "https://duan.edu.ua"
     }
   ]
 }

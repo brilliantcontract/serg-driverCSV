@@ -1,2 +1,2 @@
-id,timestamp,url,CODE,PERIODICALS,SUBTITLE,TITLE,URL
-1,2026-01-01T16:51:03.318Z,https://www.whed.net/detail_institution.php?Jzo2MF0sUzxZLGBgYApgCg==,IAU-003790,Academy Review,Universitet im Al'freda NobeljaDnipropetrovs'kij Universitet im Al'freda Nobelja (DUEL),Alfred Nobel University,https://www.whed.net/institutions/IAU-003790
+id,timestamp,url,ADDRESS_CITY,ADDRESS_PROVINCE,ADDRESS_STREET,CODE,POST_CODE,SUBTITLE,TITLE,URL,WWW
+1,2026-01-01T17:02:50.192Z,https://www.whed.net/detail_institution.php?Jzo2MF0sUzxZLGBgYApgCg==,Dnipro,Dnipropetrovsk Region,vul. Naberezhna Lenina 18,IAU-003790,49000,Universitet im Al'freda NobeljaDnipropetrovs'kij Universitet im Al'freda Nobelja (DUEL),Alfred Nobel University,https://www.whed.net/institutions/IAU-003790,https://duan.edu.ua
