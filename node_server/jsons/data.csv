@@ -1,5 +1,2 @@
-id,timestamp,url,CODE,SUBTITLE,TITLE,URL
-1,2026-01-01T16:15:06.287Z,https://www.whed.net/detail_institution.php?Jzo2MF0sUzxZLGBgYApgCg==,IAU-003790,Universitet im Al'freda NobeljaDnipropetrovs'kij Universitet im Al'freda Nobelja (DUEL),Alfred Nobel University,https://www.whed.net/institutions/IAU-003790
-2,2026-01-01T16:15:08.563Z,https://www.whed.net/detail_institution.php?Jzo2MF0sQzhYLFBgYApgCg==,IAU-002683,Cherkasy National University named after Bogdan Khmelnitsky (BKNUC),Bohdan Khmelnytsky National University of Cherkasy,https://www.whed.net/institutions/IAU-002683
-3,2026-01-01T16:15:10.856Z,https://www.whed.net/detail_institution.php?KDo2MF0sQyhXLSNgYApgCg==,IAU-022740,Bukovyns’kyj universytetBukovyna University,Bukovinian University,https://www.whed.net/institutions/IAU-022740
-4,2026-01-01T16:15:13.182Z,https://www.whed.net/detail_institution.php?KDo2MF0sQyhXLFNEYApgCg==,IAU-022739,Boryspilʹsʹkyy instytut munitsypalʹnoho upravlinnyaBoryspil Municipal Institute of Municipal Management at IAUP (BIMMMAUP),Boryspil Institute of Municipal Management,https://www.whed.net/institutions/IAU-022739
+id,timestamp,url,CODE,PERIODICALS,SUBTITLE,TITLE,URL
+1,2026-01-01T16:51:03.318Z,https://www.whed.net/detail_institution.php?Jzo2MF0sUzxZLGBgYApgCg==,IAU-003790,Academy Review,Universitet im Al'freda NobeljaDnipropetrovs'kij Universitet im Al'freda Nobelja (DUEL),Alfred Nobel University,https://www.whed.net/institutions/IAU-003790
