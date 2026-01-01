@@ -26,8 +26,25 @@ async function loadInstructions() {
 }
 
 function getTimerDelay() {
-  const value = Number(timerInput?.value || 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+  const rawValue = (timerInput?.value || "").trim().replace(",", ".");
+
+  if (!rawValue) {
+    return 0;
+  }
+
+  const numericValue = Number(rawValue);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return 0;
+  }
+
+  // Users usually type the delay in seconds. To avoid accidentally treating
+  // large values (for example 5000) as seconds, values above one thousand are
+  // assumed to be already in milliseconds.
+  if (numericValue > 1000) {
+    return numericValue;
+  }
+
+  return numericValue * 1000;
 }
 
 function sendInstructionToBackground(instruction, delayAfterLoad) {

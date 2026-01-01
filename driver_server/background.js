@@ -722,7 +722,7 @@ async function sendDataToServer(scrapedData) {
     l_scraped_data: JSON.stringify(scrapedData),
   };
 
-  const resp = await fetch("http://localhost:3015/scrape_data", {
+  const resp = await fetch("http://localhost:3021/scrape_data", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
