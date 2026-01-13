@@ -394,6 +394,8 @@ async function contentScriptFunction(item) {
       const baseSelector = hasTextMatch
         ? selectorBody.replace(hasTextMatch[0], "").trim() || "*"
         : selectorBody;
+      const allowSiblingTextFallback =
+        Boolean(textNeedle) && baseSelector.includes("+");
 
       const nextContexts = [];
 
@@ -435,6 +437,10 @@ async function contentScriptFunction(item) {
           matched = matched.filter((node) => {
             if (hasText(node)) {
               return true;
+            }
+
+            if (!allowSiblingTextFallback) {
+              return false;
             }
 
             // Allow simple patterns like "label:has-text('Street:') + value" by
@@ -862,4 +868,3 @@ async function sendDataToServer(scrapedData) {
   const respJson = await resp.json();
   console.log("Local server response:", respJson);
 }
-
