@@ -435,18 +435,15 @@ async function contentScriptFunction(item) {
             (el?.textContent || "").toLowerCase().includes(textNeedle);
 
           matched = matched.filter((node) => {
-            if (hasText(node)) {
-              return true;
+            if (allowSiblingTextFallback) {
+              // For selectors like "label:has-text('Street:') + value" only
+              // accept nodes whose immediate previous sibling matches the label
+              // text, instead of matching nodes that contain the text themselves.
+              const sibling = node.previousElementSibling;
+              return Boolean(sibling && hasText(sibling));
             }
 
-            if (!allowSiblingTextFallback) {
-              return false;
-            }
-
-            // Allow simple patterns like "label:has-text('Street:') + value" by
-            // also checking the immediate previous sibling for the label text.
-            const sibling = node.previousElementSibling;
-            return Boolean(sibling && hasText(sibling));
+            return hasText(node);
           });
         }
 
