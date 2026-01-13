@@ -353,6 +353,19 @@ async function contentScriptFunction(item) {
   //  - within it, picks the H3 whose text contains "Officers"
   //  - moves to the next sibling DIV after that H3
   //  - then selects the descendant paragraphs with the .principal class
+
+  function normalizeSelectorSegment(segment) {
+    if (typeof segment !== "string") {
+      return segment;
+    }
+
+    return segment.replace(
+      /(^|[^:])(\b[a-zA-Z][a-zA-Z0-9_-]*|\*)\((['"])(.*?)\3\)/g,
+      (match, prefix, tagName, quote, text) =>
+        `${prefix}${tagName}:has-text(${quote}${text}${quote})`
+    );
+  }
+
   function queryElements(selector, context = document) {
     if (typeof selector !== "string" || !selector.trim()) {
       return [];
@@ -372,9 +385,9 @@ async function contentScriptFunction(item) {
       }
 
       const isNextSibling = segment.toLowerCase().startsWith("next:");
-      const selectorBody = isNextSibling
-        ? segment.slice("next:".length).trim()
-        : segment;
+      const selectorBody = normalizeSelectorSegment(
+        isNextSibling ? segment.slice("next:".length).trim() : segment
+      );
 
       const hasTextMatch = selectorBody.match(/:has-text\(("|')(.*?)(\1)\)/i);
       const textNeedle = hasTextMatch?.[2]?.toLowerCase();
@@ -744,12 +757,12 @@ async function contentScriptFunction(item) {
       // When a selector matches multiple elements we want to store the collected
       // values in a single field, separated by the "◙" symbol. This keeps all
       // related data together instead of spreading it across multiple records.
-      if (values.length > 1) {
-        const joinedValue = values
-          .map((val) => (typeof val === "string" ? val : JSON.stringify(val)))
-          .join("◙");
-        values.splice(0, values.length, joinedValue);
-      }
+      // if (values.length > 1) {
+      //   const joinedValue = values
+      //     .map((val) => (typeof val === "string" ? val : JSON.stringify(val)))
+      //     .join("◙");
+      //   values.splice(0, values.length, joinedValue);
+      // }
 
       collectedValues.set(fieldName, values);
       if (values.length > maxLength) {
