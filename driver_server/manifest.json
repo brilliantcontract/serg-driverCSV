@@ -6,9 +6,7 @@
   "permissions": [
     "tabs",
     "scripting",
-    "activeTab",
-    "downloads",
-    "storage"
+    "activeTab"
   ],
   "host_permissions": [
     "https://brilliantcontract.net:8443/*",
