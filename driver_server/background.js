@@ -360,7 +360,7 @@ async function contentScriptFunction(item) {
     }
 
     return segment.replace(
-      /(^|[^:])(\b[a-zA-Z][a-zA-Z0-9_-]*|\*)\((['"])(.*?)\3\)/g,
+      /(^|[^:\w-])(\b[a-zA-Z][a-zA-Z0-9_-]*|\*)\((['"])(.*?)\3\)/g,
       (match, prefix, tagName, quote, text) =>
         `${prefix}${tagName}:has-text(${quote}${text}${quote})`
     );
